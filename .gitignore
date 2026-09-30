@@ -1,0 +1,14 @@
+# data, checkpoints, logs: live on LUMI (/scratch/project_462001611/scrabble-lexmem) and locally, never in git
+data/
+logs/
+*.pt
+*.pkl
+*.log
+*.png
+__pycache__/
+# word lists (ENABLE is public domain but large; NWL23 is NASPA-licensed) and third-party reference files
+*.txt
+!requirements.txt
+*.kwg
+macondo_mlhelper.go
+macondo_experiments_log.md
