@@ -14,6 +14,7 @@ TAU_B = float(E("TAU_B", 0.25)); TAG = E("TAG", "v2_branch"); NW = int(E("NWORK"
 torch.manual_seed(0); random.seed(0)
 lex = Lexicon(E("LEXICON", "data/NWL23.txt")); model = PolicyNet(lex).to(dev)
 model.load_state_dict(torch.load(E("INIT"), map_location=dev), strict=False); anchor = copy.deepcopy(model).eval()
+if E("ANCHOR"): anchor.load_state_dict(torch.load(E("ANCHOR"), map_location=dev), strict=False)   # continuation: keep the KL anchor on the original start net
 for p in anchor.parameters(): p.requires_grad_(False)
 games = [g for t in E("TRAIN").split(",") for g in pickle.load(open(f"data/games_{t}.pkl", "rb"))]
 pairs = [(gi, ti) for gi, (tr, _) in enumerate(games) for ti, r in enumerate(tr) if "branch" in r and r["move"][0] in ("play", "exchange")]
