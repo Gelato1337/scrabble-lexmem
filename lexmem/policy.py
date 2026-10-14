@@ -16,7 +16,22 @@ def move_feats(lex, rack, moves):
     for i, (s, r, c, d, L, w) in enumerate(moves):
         x[i, 0] = s / 50; x[i, 1] = L / 15; x[i, 2] = r / 14; x[i, 3] = c / 14; x[i, 4] = d
         x[i, 5] = (s >= 50)  # bingo-ish
+        if d == 2: x[i, :] = 0; x[i, XFLAG] = 1
     return x
+
+XFLAG = 8            # move-feature column marking an exchange token (d == 2 in the move tuple)
+def exchange_moves(rack):
+    """every distinct exchange as a move tuple (0, 0, 0, 2, 0, keep) with keep = tuple of 27 counts kept (1..7 tiles exchanged)."""
+    tiles = [t for t in range(27) for _ in range(int(rack[t]))]; out = set()
+    for mask in range(1, 1 << len(tiles)):
+        keep = np.zeros(27, dtype=np.int16)
+        for i, t in enumerate(tiles):
+            if not (mask >> i) & 1: keep[t] += 1
+        out.add(tuple(int(x) for x in keep))
+    return [(0, 0, 0, 2, 0, k) for k in sorted(out)]
+def exchange_string(rack, keep):
+    ex = np.asarray(rack, dtype=np.int16) - np.asarray(keep, dtype=np.int16)
+    return "(exch " + "".join("?" if t == BLANK else LET[t] for t in range(27) for _ in range(int(ex[t]))) + ")"
 
 def retrieval_mask(lex, rack, unseen, L, maxmiss=3):
     """words of length L whose letters fit rack+unseen with <= maxmiss letters not on the rack (blanks cover)."""
@@ -28,11 +43,14 @@ def retrieval_mask(lex, rack, unseen, L, maxmiss=3):
 
 class MoveDataset(Dataset):
     """position -> legal moves (our movegen), target = index of the move actually played (HastyBot), value = final spread."""
-    def __init__(self, lex, games, n_items=10**7, seed=0, use_lex=False, kply=4, tau=2.0):
-        self.lex, self.games, self.n, self.seed, self.rng, self.use_lex, self.kply, self.tau = lex, games, n_items, seed, None, use_lex, kply, tau
-        self.items = [(gi, ti) for gi, (traj, sc) in enumerate(games) for ti in range(len(traj)) if traj[ti]["move"][0] == "play"]
+    def __init__(self, lex, games, n_items=10**7, seed=0, use_lex=False, kply=4, tau=2.0, exch=False, ei=False):
+        self.lex, self.games, self.n, self.seed, self.rng, self.use_lex, self.kply, self.tau, self.exch, self.ei = lex, games, n_items, seed, None, use_lex, kply, tau, exch, ei
+        self.items = [(gi, ti) for gi, (traj, sc) in enumerate(games) for ti in range(len(traj)) if traj[ti]["move"][0] == "play" and traj[ti].get("known", True)]
+        if exch:   # positions where the teacher exchanged (label_bot marks them known=False, teacher_raw '(exch ...)')
+            self.items += [(gi, ti) for gi, (traj, sc) in enumerate(games) for ti in range(len(traj))
+                           if str(traj[ti].get("teacher_raw", "")).startswith("(exch") and traj[ti]["bag"] >= 7]
     def __len__(self): return self.n
-    def build(self, rec, final, target_letters=None, target_rcd=None, moves=None):
+    def build(self, rec, final, target_letters=None, target_rcd=None, moves=None, target_keep=None):
         lex = self.lex; board, blanks, rack, unseen = rec["board"], rec["blanks"], rec["rack"], rec["unseen"]
         if moves is None:
             cc = cross_checks(lex, board, blanks); moves = legal_moves(lex, board, blanks, cc, rack)
@@ -45,15 +63,22 @@ class MoveDataset(Dataset):
             for i, (s, r, c, d, L, w) in enumerate(moves):
                 if (r, c, d) == (r0, c0, d0) and lex.words[w] == word: tgt = i; break
             if tgt < 0: return None
-        moves.sort(key=lambda m: -m[0])
+        moves.sort(key=lambda m: (-m[0], m[5], m[1], m[2], m[3]))   # score, then word index / row / col / dir (same order as the Go engine)
         if target_rcd is not None:
             tm = [m for m in moves if (m[1], m[2], m[3]) == (r0, c0, d0) and lex.words[m[5]] == word][0]
             moves = [tm] + [m for m in moves[:MAXM] if m is not tm]
             perm = list(range(len(moves))); (self.rng or random).shuffle(perm); moves = [moves[p] for p in perm]; tgt = perm.index(0)
         else: moves = moves[:MAXM]
+        if self.exch and rec["bag"] >= 7:
+            xm = exchange_moves(rack); moves = moves + xm
+            if target_keep is not None:
+                tgt = next((i for i, m in enumerate(moves) if m[3] == 2 and m[5] == tuple(int(x) for x in target_keep)), -1)
+                if tgt < 0: return None
+        elif target_keep is not None: return None
         mf = move_feats(lex, rack, moves)
         used = np.zeros((len(moves), 27), dtype=np.float32)
         for i, (s, r, c, d, L, w) in enumerate(moves):
+            if d == 2: used[i] = rack - np.asarray(w, dtype=np.float32); continue      # exchange: leave = kept tiles
             fixed = np.zeros(26, dtype=np.int16); dr, dc = ((0, 1), (1, 0))[d]
             for j in range(L):
                 b = board[r + dr * j, c + dc * j]
@@ -63,7 +88,7 @@ class MoveDataset(Dataset):
         leave = (rack[None].astype(np.float32) - used)
         out = dict(_moves=moves, board=board.astype(np.int64) + 1, rack=rack.astype(np.float32), unseen=unseen.astype(np.float32),
                    glob=np.array([rec["bag"] / 100, (rec["scores"][0] - rec["scores"][1]) / 100, rec["turn"] / 30], dtype=np.float32),
-                   mf=mf, leave=leave, widx=np.array([m[5] for m in moves], dtype=np.int64), target=tgt, value=np.float32(final / 100))
+                   mf=mf, leave=leave, widx=np.array([0 if m[3] == 2 else m[5] for m in moves], dtype=np.int64), target=tgt, value=np.float32(final / 100))
         if self.use_lex:
             out["rmask"] = [retrieval_mask(lex, rack, unseen, L) for L in RET_LENS]
         return out
@@ -79,15 +104,25 @@ class MoveDataset(Dataset):
         while True:
             gi, ti = self.items[self.rng.randrange(len(self.items))]; traj, sc = self.games[gi]; rec = traj[ti]
             m = rec["move"]; final = sc[rec["mover"]] - sc[1 - rec["mover"]]
-            it = self.build(rec, final, target_rcd=(m[1], m[2], m[3], m[5]))
+            raw = str(rec.get("teacher_raw", ""))
+            if self.exch and not rec.get("known", True) and raw.startswith("(exch"):
+                ex = counts27([BLANK if ch == "?" else IDX[ch] for ch in raw[6:-1].strip()]); keep = rec["rack"] - ex
+                if (keep < 0).any(): continue
+                it = self.build(rec, final, target_keep=keep)
+                if it is not None and self.ei:   # one-hot soft target on the exchange (stale play candidates from an older label are ignored)
+                    it["soft"] = np.eye(len(it["_moves"]), dtype=np.float32)[it["target"]]; it["margin"] = np.float32(99.0)
+            else:
+                it = self.build(rec, final, target_rcd=(m[1], m[2], m[3], m[5]))
             if it is not None:
                 it["w_pol"] = np.float32(0.0 if rec.get("explore") else 1.0)
-                if "cands" in rec:    # expert iteration: soft target = softmax(sim estimate / TAU) over the candidate set
+                if "cands" in rec and rec.get("known", True):    # expert iteration: soft target = softmax(sim estimate / TAU) over the candidate set
                     keyidx = {}
                     for k, m in enumerate(it["_moves"]): keyidx.setdefault((m[1], m[2], m[3], m[5]), k)
                     soft = np.zeros(len(it["_moves"]), dtype=np.float32); es = np.array(rec["cand_est"], dtype=np.float64)
                     w = np.exp((es - es.max()) / self.tau)
                     srt = np.sort(es)[::-1]; it["margin"] = np.float32(srt[0] - srt[1] if len(srt) > 1 else 99.0)
+                    # cost weight: how much the choice matters here = best win % - mean of the top 8 candidates (win-% points), /2, clipped
+                    it["cw"] = np.float32(np.clip((srt[0] - srt[:8].mean()) / 2 if len(srt) > 1 else 1.0, 0.25, 4.0))
                     for (r_, c_, d_, L_, w_), ww in zip(rec["cands"], w):
                         k = keyidx.get((r_, c_, d_, w_))
                         if k is not None: soft[k] += ww
@@ -111,7 +146,7 @@ def collate_moves(items):
         if "soft" in items[0]:
             soft = torch.zeros(B, M)
             for b, it in enumerate(items): soft[b, :len(it["soft"])] = torch.tensor(it["soft"])
-            out["soft"] = soft; out["margin"] = torch.tensor([it.get("margin", 99.0) for it in items])
+            out["soft"] = soft; out["margin"] = torch.tensor([it.get("margin", 99.0) for it in items]); out["cw"] = torch.tensor([float(it.get("cw", 1.0)) for it in items])
         mf = torch.zeros(B, M, MF); leave = torch.zeros(B, M, 27); widx = torch.zeros(B, M, dtype=torch.long); valid = torch.zeros(B, M, dtype=torch.bool)
         for b, it in enumerate(items):
             n = len(it["widx"]); mf[b, :n] = torch.tensor(it["mf"]); leave[b, :n] = torch.tensor(it["leave"]); widx[b, :n] = torch.tensor(it["widx"]); valid[b, :n] = True
@@ -141,6 +176,8 @@ class PolicyNet(nn.Module):
         enc = nn.TransformerEncoderLayer(D, 4, D * 4, dropout=0.0, batch_first=True, norm_first=True)
         self.tr = nn.TransformerEncoder(enc, layers); self.norm = nn.LayerNorm(D)
         self.pol = nn.Linear(D, 1); self.val = nn.Sequential(nn.Linear(D, D), nn.GELU(), nn.Linear(D, 1))
+        # TD heads (self-play, td_train.py): [future spread change / 100, win logit] per move token (Q) and per position (V)
+        self.qh = nn.Sequential(nn.Linear(D, D), nn.GELU(), nn.Linear(D, 2)); self.vh = nn.Sequential(nn.Linear(D, D), nn.GELU(), nn.Linear(D, 2))
         if use_lex:
             self.qenc = QueryEncoder(D, 3)
             self.register_buffer("keys", torch.zeros(lex.NW, D)); self.register_buffer("Wt", torch.tensor(lex.W, dtype=torch.float32))
@@ -157,6 +194,20 @@ class PolicyNet(nn.Module):
         self.wenc.load_state_dict({k[5:]: v for k, v in sd.items() if k.startswith("wenc.") and k[5:].split(".")[0] in ("emb", "pos", "tr", "out")}, strict=False)
         self.qenc.load_state_dict({k[5:]: v for k, v in sd.items() if k.startswith("qenc.")}); self.refresh_keys()
     def forward(self, b, with_moves=True):
+        h, M = self._encode(b, with_moves)
+        if not with_moves: return None, self.val(h[:, 0]).squeeze(-1)
+        plog = self.pol(h[:, -M:]).squeeze(-1).masked_fill(~b["valid"], -1e4)
+        return plog, self.val(h[:, 0]).squeeze(-1)
+    def qv(self, b, with_moves=True):
+        """TD heads: q (B, M, 2) for every move token, v (B, 2) for the position; [..., 0] = spread change / 100, [..., 1] = win logit."""
+        h, M = self._encode(b, with_moves); v = self.vh(h[:, 0])
+        if not with_moves: return None, v
+        return self.qh(h[:, -M:]), v
+    def heads(self, b):
+        """one trunk pass -> policy logits (B, M), Q (B, M, 2), V (B, 2)."""
+        h, M = self._encode(b, True); hm = h[:, -M:]
+        return self.pol(hm).squeeze(-1).masked_fill(~b["valid"], -1e4), self.qh(hm), self.vh(h[:, 0])
+    def _encode(self, b, with_moves=True):
         B = b["rack"].shape[0]; M = b["widx"].shape[1] if with_moves else 0
         board = self.bemb(b["board"]).permute(0, 3, 1, 2); board = torch.cat([board, self.prem.expand(B, -1, -1, -1)], 1)
         pos = torch.stack([self.cnn(board) + self.ttype[0], self.rack(b["rack"] / 3) + self.ttype[1], self.unseen(b["unseen"] / 12) + self.ttype[2], self.glob(b["glob"]) + self.ttype[3]], 1)
@@ -174,11 +225,9 @@ class PolicyNet(nn.Module):
                 rt = self.keys[idx] + self.rfeat(torch.stack([top.values, need / 3], -1)) + self.ttype[5]
                 toks.append(rt); pads.append(~rv.gather(1, top.indices))
         if with_moves:
-            wk = self.wenc(b["widx"])
+            wk = self.wenc(b["widx"]) * (1 - b["mf"][..., XFLAG:XFLAG + 1])   # exchange tokens carry no word
             mv = wk + self.mfeat(torch.cat([b["mf"], b["leave"] / 3], -1)) + self.remb((b["mf"][..., 2] * 14).round().long()) + self.cemb((b["mf"][..., 3] * 14).round().long()) + self.ttype[4]
             toks.append(mv); pads.append(~b["valid"])
         x = torch.cat(toks, 1); pad = torch.cat(pads, 1)
         h = self.norm(self.tr(x, src_key_padding_mask=pad))
-        if not with_moves: return None, self.val(h[:, 0]).squeeze(-1)
-        plog = self.pol(h[:, -M:]).squeeze(-1).masked_fill(~b["valid"], -1e4)
-        return plog, self.val(h[:, 0]).squeeze(-1)
+        return h, M

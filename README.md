@@ -3,6 +3,147 @@
 Read `scrabble_problem.md` first. It is the problem statement, prior work, the
 proposed architecture (§14) and the feasibility results so far.
 
+## Architecture
+
+Results with provenance: [docs/benchmarks.md](docs/benchmarks.md). Sample positions with the net's top-5 moves: [docs/samples/positions.md](docs/samples/positions.md).
+
+### Overview
+The rules are exact and hand-written; everything that is a judgement (which move, how good a position is) is learned.
+A position becomes a set of tokens; the candidate moves are tokens too, and the policy picks one of them.
+
+```mermaid
+flowchart LR
+    subgraph DATA["Game sources"]
+        H["HastyBot self-play<br/>(Macondo autoplay, 100k games)"]
+        X["Human tournament games<br/>(cross-tables GCG, 28k)"]
+        T["SIMMING_BOT labels<br/>(teacher moves + win % per candidate)"]
+    end
+    R["Rules engine<br/>lexmem/core.py"]
+    E["Position encoder"]
+    L["Lexicon memory<br/>(optional branch)"]
+    M["Move tokens<br/>(legal moves)"]
+    TR["Transformer<br/>3 layers, D=256"]
+    P["Policy head<br/>one logit per move"]
+    V["Value head<br/>final spread"]
+    S["Search<br/>2-ply Monte Carlo rollouts"]
+    EV["Evaluation<br/>vs Macondo bots"]
+    DATA --> R
+    R -->|board, rack, unseen| E
+    R -->|legal moves| M
+    E --> TR
+    L --> TR
+    M --> TR
+    TR --> P
+    TR --> V
+    P --> S
+    V --> S
+    P --> EV
+    S --> EV
+```
+
+### Rules engine and data (`lexmem/core.py`, `lexmem/replay.py`, `lexmem/gcg.py`)
+```mermaid
+flowchart TB
+    LEX["NWL23 word list<br/>196,601 words"] --> CC["Cross-checks<br/>per square, both directions"]
+    B["Board 15x15 + blanks"] --> CC
+    CC --> MG["Legal move generation<br/>(Python; Macondo shell as a fast server for sims)"]
+    RK["Rack (27 counts, blank = 27th)"] --> MG
+    MG --> SC["Exact scoring<br/>premiums, cross words, 50-pt bingo"]
+    SC --> TOP["Top 400 moves by score<br/>(+ the target move in training)"]
+    subgraph IN["Game logs to positions"]
+        A1["Macondo autoplay logs"] --> RP["replay.py: re-score every play"]
+        A2["GCG files"] --> GP["gcg.py: annotator racks, phonies withdrawn,<br/>cut at first score mismatch"]
+    end
+    RP --> POS["Positions: board, rack, unseen tiles,<br/>scores, bag, move played, final spread"]
+    GP --> POS
+```
+Unseen = full bag minus board minus my rack (the opponent's rack is part of it). Every replayed play is checked against
+the logged score.
+
+### Position encoder (`PolicyNet`, `lexmem/policy.py`)
+```mermaid
+flowchart LR
+    B["Board letters<br/>Embedding(27, 32)"] --> CAT["concat"]
+    PR["Premium squares<br/>one-hot (5)"] --> CAT
+    CAT --> C1["Conv 3x3, 64"] --> C2["Conv 3x3, 64"] --> C3["Conv 1x1, 16"] --> FL["Linear 16x225 -> 256"]
+    FL --> T1["board token"]
+    RK["Rack counts (27)"] --> T2["rack token<br/>Linear 27 -> 256"]
+    UN["Unseen counts (27)"] --> T3["unseen token<br/>Linear 27 -> 256"]
+    GL["Bag size, spread, turn"] --> T4["globals token<br/>Linear 3 -> 256"]
+    CLS["CLS token (learned)"]
+```
+Each token gets a learned type embedding. These five tokens are the whole position; there are no hand-made features
+such as leave values.
+
+### Lexicon memory (`QueryEncoder`, `WordEncoder`, `lexmem/model.py`)
+The project's one new idea: the net looks up the words it could build, including words 1-3 draws away, instead of
+seeing only the moves playable now.
+```mermaid
+flowchart TB
+    subgraph KEYS["Word keys (computed once, frozen in the policy)"]
+        W["each NWL23 word"] --> WE["WordEncoder<br/>letter embedding 128 + position<br/>2-layer transformer -> Linear 128 -> 256"]
+        WE --> K["196,601 keys"]
+    end
+    subgraph QUERY["Query (twice: 7-letter and 8-letter words)"]
+        Q1["rack, unseen, globals,<br/>empty lane of length L, board"] --> QE["QueryEncoder<br/>3-layer transformer"]
+    end
+    MASK["Rules mask: words whose letters fit<br/>rack + unseen with at most 3 not on the rack"]
+    QE --> DOT["dot product with masked keys"]
+    K --> DOT
+    MASK --> DOT
+    DOT --> TOPK["top 32 words per query"]
+    TOPK --> RT["word tokens = key + (match score, letters still needed)"]
+```
+Keys and query encoder are pretrained on the reachability task (`feas2_lexmem.py`: NDCG@32 0.97, every playable word in
+the top 32 of its mask). In the policy the retrieved words are 64 extra tokens (`USE_LEX=1`).
+
+### Move tokens, transformer and heads
+```mermaid
+flowchart LR
+    MV["each legal move (up to 400)"] --> WK["WordEncoder(word)"]
+    MV --> MF["Linear: score, length, row, col,<br/>direction, bingo, tiles needed, blanks,<br/>leave counts (27)"]
+    MV --> RC["row + column embeddings"]
+    WK --> SUM["move token (sum)"]
+    MF --> SUM
+    RC --> SUM
+    POS["5 position tokens"] --> TR["Transformer encoder<br/>3 layers, 4 heads, D=256, pre-norm"]
+    LEXT["64 retrieved word tokens<br/>(optional)"] --> TR
+    SUM --> TR
+    TR -->|each move token| POL["Policy: Linear -> logit<br/>softmax over legal moves"]
+    TR -->|CLS| VAL["Value: MLP -> final spread / 100<br/>(position-only pass: 4-ply spread change)"]
+```
+3.9M parameters without the lexicon branch. Every move token attends to the position and to every other move, so the
+policy compares moves directly rather than scoring each one alone.
+
+### Search (`lexmem/sim.py`, `lexmem/search.py`)
+```mermaid
+flowchart LR
+    POSI["position"] --> CAND["K candidates<br/>(net's top K, or Macondo's equity top K)"]
+    CAND --> W["S sampled worlds<br/>(opponent rack + bag order, shared across candidates)"]
+    W --> R1["opponent reply"] --> R2["my follow-up"] --> HZ["horizon value<br/>(learned value net or leave table)"]
+    HZ --> AVG["mean spread per candidate<br/>successive halving: top 2 get S2 more worlds"]
+    AVG --> PICK["play the best"]
+```
+Best result so far: Macondo candidates + learned value at the horizon, 52.5 % vs HastyBot.
+
+### Training and evaluation
+```mermaid
+flowchart TB
+    subgraph TEACH["Targets"]
+        I1["Imitation: the move HastyBot played"]
+        I2["Imitation: human annotator's move"]
+        I3["Distillation: SIMMING_BOT's move<br/>or soft targets over its candidates"]
+        I4["Self-play: PPO on outcomes,<br/>expert iteration on sim rankings"]
+    end
+    TEACH --> NET["Policy/value net (imitate.py)"]
+    NET --> EVAL["play_eval.py: thousands of games"]
+    EVAL --> O1["NO_LEAVE_BOT (greedy)"]
+    EVAL --> O2["HastyBot (static equity)"]
+    EVAL --> O3["SIMMING_BOT (Macondo sim, 10 s/move)"]
+```
+Opponents run through `bin/lexmem_bot` (`cmd/lexmem_bot` in our Macondo checkout on LUMI), which plays any Macondo bot
+code and, with `CANDS=K`, also returns the sim's top-K candidates with win probabilities.
+
 ## Files
 - `scrabble_problem.md`   — the doc. Everything is in here.
 - `feas1_alive.py`        — step 1: how many words are alive under the tile mask (no board). Runs in seconds.

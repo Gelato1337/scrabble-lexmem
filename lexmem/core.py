@@ -177,6 +177,33 @@ def lane_scores(lex, info, L, loc):
     if empty.sum() == 7: score = score + 50
     return score.astype(np.int32)
 
+def blank_penalty(info, letters, deficit):
+    """Best blank designation for one word in a lane. letters: (L,) letter idx; deficit: (26,) blanks needed per letter.
+    A blank on empty square j forfeits val*lm*(word mult of the play + word mult of j if it forms a cross word).
+    Returns (total points forfeited, list of lane positions that take the blanks)."""
+    empty, lm, wm, has = info["empty"], info["lm"], info["wm"], info["has"]
+    wmul = int(np.prod(np.where(empty, wm, 1))); pen_all = VAL[letters] * lm * (wmul + has * wm); tot = 0; pos = []
+    for l in np.where(deficit > 0)[0]:
+        js = [j for j in range(len(letters)) if empty[j] and letters[j] == l]
+        js.sort(key=lambda j: (pen_all[j], j)); take = js[:int(deficit[l])]; pos += take; tot += int(sum(pen_all[j] for j in take))
+    return tot, pos
+
+def designate(lex, board, rack27, r, c, d, L, widx):
+    """Letters string for placing word widx ('.' = through tile, lowercase = blank), blanks on the best squares."""
+    dr, dc = ((0, 1), (1, 0))[d]; rows = r + dr * np.arange(L); cols = c + dc * np.arange(L)
+    fixed = board[rows, cols]; empty = fixed < 0; letters = lex.POS[widx, :L]
+    pr, pc = (rows + dc, cols + dr), (rows - dc, cols - dr)   # perpendicular neighbours
+    def occ(rr, cc_):
+        ok = (rr >= 0) & (rr < N) & (cc_ >= 0) & (cc_ < N); out = np.zeros(L, dtype=bool)
+        out[ok] = board[rr[ok], cc_[ok]] >= 0; return out
+    info = dict(empty=empty, lm=LMULT[rows, cols], wm=WMULT[rows, cols], has=(occ(*pr) | occ(*pc)))
+    need = np.zeros(26, dtype=np.int16)
+    for j in range(L):
+        if empty[j]: need[letters[j]] += 1
+    deficit = np.maximum(need - rack27[:26], 0)
+    bpos = set(blank_penalty(info, letters, deficit)[1]) if deficit.sum() > 0 else set()
+    return "".join("." if not empty[j] else (LET[letters[j]].lower() if j in bpos else LET[letters[j]]) for j in range(L))
+
 def need_counts(lex, info, L, loc):
     """Letters each candidate needs to place = word counts - fixed letters. (n,26)"""
     fixedc = np.zeros(26, dtype=np.int16)
@@ -268,29 +295,30 @@ def legal_moves(lex, board, blanks, cc, rack27, lane_list=None, max_lanes=None, 
         if not okm.any(): continue
         loc2 = loc[okm]; g2 = gidx[okm]
         sc = lane_scores(lex, info, L, loc2)
-        # blank penalty: subtract value of letters covered by blanks (approx: cheapest possible? use exact min)
-        if rb > 0:
-            df = np.maximum(need[okm] - rack[None], 0)   # letters needing blanks
-            pen = (df * VAL[:26][None]).sum(1)           # letters covered by blank score 0 (ignore premium mult, approx)
-            sc = sc - pen
+        if rb > 0:   # exact: each blank goes on the square where its letter would score least (= the best designation)
+            df = np.maximum(need[okm] - rack[None], 0)
+            for k in np.where(df.sum(1) > 0)[0]:
+                sc[k] -= blank_penalty(info, lex.POS_L[L][loc2[k]], df[k])[0]
         for k in range(len(loc2)):
             out.append((int(sc[k]), r, c, d, L, int(g2[k])))
     return out
 
 def apply_move(lex, board, blanks, rack27, r, c, d, L, widx):
-    """Place word widx in lane; consume rack tiles (blanks for letters not held). Returns new rack27, placed list."""
+    """Place word widx in lane; blanks go on the squares chosen by designate() (the exact best). Returns new rack27, placed list."""
+    letters = designate(lex, board, rack27, r, c, d, L, widx)
     board = board.copy(); blanks = blanks.copy(); rack = rack27.copy()
     dr, dc = ((0, 1), (1, 0))[d]
     placed = []
-    for j in range(L):
-        rr, c2 = r + dr * j, c + dc * j
-        if board[rr, c2] >= 0: continue
-        l = lex.POS[widx, j]
+    for j, ch in enumerate(letters):
+        if ch == ".": continue
+        rr, c2 = r + dr * j, c + dc * j; l = IDX[ch.upper()]
         board[rr, c2] = l
-        if rack[l] > 0: rack[l] -= 1
-        else:
+        if ch.islower():
             assert rack[BLANK] > 0
             rack[BLANK] -= 1; blanks[rr, c2] = True
+        else:
+            assert rack[l] > 0
+            rack[l] -= 1
         placed.append((rr, c2, int(l)))
     return board, blanks, rack, placed
 

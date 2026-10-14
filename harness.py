@@ -46,6 +46,35 @@ class HastyBot:
         try: self.p.stdin.write("exit\n"); self.p.stdin.flush(); self.p.wait(timeout=5)
         except Exception: self.p.kill()
 
+class MacondoBot:
+    wants_state = True   # can stand in for our policy in play_vs_hasty
+    """Any Macondo bot (BotRequest code: HASTY_BOT, NO_LEAVE_BOT, LEVEL1..5_PROBABILISTIC, SIMMING_BOT, ...) via bin/lexmem_bot
+    (cmd/lexmem_bot in our Macondo checkout): one CGP per line in, 'MOVE <play>' out. `secs` bounds sim/endgame time."""
+    def __init__(self, code="HASTY_BOT", secs=10.0, lexicon="NWL23", threads=1, cpus=None):
+        # cpus: pin the bot to these cores (Macondo's endgame solver otherwise starts runtime.NumCPU() threads per bot)
+        self.p = subprocess.Popen([os.path.join(MACONDO, "bin/lexmem_bot")], cwd=MACONDO, stdin=subprocess.PIPE,
+                                  preexec_fn=(lambda: os.sched_setaffinity(0, cpus)) if cpus else None,
+                                  stdout=subprocess.PIPE, stderr=open(os.environ.get("BOT_ERR", os.devnull), "a"), text=True, bufsize=1,
+                                  env=dict(os.environ, GOMAXPROCS=str(max(2, threads)), SIM_THREADS=str(threads),
+                                           GOMEMLIMIT=os.environ.get("BOT_MEM", "2GiB")))   # endgame table = 20 % of this, not of node RAM
+        self.code, self.secs, self.lexicon = code, secs, lexicon
+    cgp = HastyBot.cgp
+    def move(self, board, blanks, rack27, scores, zeros):
+        self.p.stdin.write(f"{self.code} {self.secs} {self.cgp(board, blanks, rack27, scores, zeros)}\n"); self.p.stdin.flush()
+        line = self.p.stdout.readline()
+        if not line: raise RuntimeError(f"lexmem_bot died on: {self.code} {self.secs} {self.cgp(board, blanks, rack27, scores, zeros)}")
+        self.last_cands = []
+        if not line.startswith("MOVE "): print(f"WARNING: {self.code}: {line.strip()} -> pass", flush=True); return "(Pass)"
+        play, _, extra = line[5:].rstrip("\n").partition("\t")
+        if extra.startswith("C "):   # CANDS=K: sim candidates (winprob, equity, iterations, ignored, play)
+            for c in extra[2:].split(";"):
+                f = c.split(",", 4)
+                if len(f) == 5: self.last_cands.append((float(f[0]), float(f[1]), int(f[2]), f[3] == "1", f[4].strip()))
+        return play.strip()
+    def close(self):
+        try: self.p.stdin.close(); self.p.wait(timeout=5)
+        except Exception: self.p.kill()
+
 def macondo_play_to_letters(play):
     """'G7 M(E)GAHITS' -> (r,c,d,'M.GAHITS'); '(exch ABC)' / '(Pass)' passthrough."""
     if play.startswith("("): return play
@@ -72,20 +101,16 @@ def play_vs_hasty(lex, policy, hasty, seed, we_first):
         me = turn % 2; rack = racks[me]
         if me == us:
             cc = cross_checks(lex, board, blanks)
-            mv = policy(lex, board, blanks, cc, rack, counts27(bag) + racks[1 - me], rng)
+            if getattr(policy, "wants_state", False):   # a Macondo bot on our side: answers with a play string
+                mv = policy.move(board, blanks, rack, (scores[me], scores[1 - me]), zeros)
+            else:
+                mv = policy(lex, board, blanks, cc, rack, counts27(bag) + racks[1 - me], rng)
             if mv is None: action = "(Pass)"
+            elif isinstance(mv, str):                     # '(exch ABC)', '(Pass)' or a Macondo play string
+                action = mv if mv.startswith("(") else (macondo_play_to_letters(mv) or "(Pass)")
             else:
                 s, r, c, d, L, widx = mv
-                letters = ""; dr, dc = ((0, 1), (1, 0))[d]
-                for j in range(L):
-                    rr, c2 = r + dr * j, c + dc * j
-                    letters += "." if board[rr, c2] >= 0 else LET[lex.POS[widx, j]]
-                # blanks: letters not on rack -> lowercase
-                need = counts27([IDX[ch] for ch in letters if ch != "."]); tmp = rack.copy(); out = ""
-                for ch in letters:
-                    if ch == ".": out += "."; continue
-                    if tmp[IDX[ch]] > 0: tmp[IDX[ch]] -= 1; out += ch
-                    else: tmp[BLANK] -= 1; out += ch.lower()
+                out = designate(lex, board, rack, r, c, d, L, widx)   # blanks on the best squares (exact scoring)
                 action = (r, c, d, out)
         else:
             play = hasty.move(board, blanks, rack, (scores[me], scores[1 - me]), zeros)
