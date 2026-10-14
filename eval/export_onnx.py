@@ -3,7 +3,7 @@
    Inputs: board (B,15,15) int64 (letter idx + 1, 0 = empty), rack (B,27), unseen (B,27), glob (B,3) [bag/100, spread/100, turn/30].
 2. Parity: onnxruntime vs PyTorch on real positions (if onnxruntime is installed).
 3. Budget: how many sim iterations / candidates the 10 s teacher ran per position (cand_iters in data/games_simsoft_31.pkl).
-Usage: CKPT=data/policy_simsoft_exch_nolex.pt OUT=data/onnx python export_onnx.py"""
+Usage: CKPT=data/policy_simsoft_exch_nolex.pt OUT=data/onnx PYTHONPATH=. python eval/export_onnx.py"""
 import os, time, pickle, numpy as np, torch, torch.nn as nn
 from lexmem.core import *; from lexmem.policy import PolicyNet, MoveDataset, collate_moves
 torch.backends.mha.set_fastpath_enabled(False)

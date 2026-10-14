@@ -8,5 +8,5 @@
 source lumi/common.sh
 export PYTHONPATH=.
 I=${SLURM_ARRAY_TASK_ID:-0}
-CKPT=$CKPT ACT=$ACT NPROC=${NPROC:-124} TAG=td_${ARM}_g${R}_$I python selfplay_td.py $NGT $((SEEDBASE + I * 100000)) || exit 1
+CKPT=$CKPT ACT=$ACT NPROC=${NPROC:-124} TAG=td_${ARM}_g${R}_$I python selfplay/selfplay_td.py $NGT $((SEEDBASE + I * 100000)) || exit 1
 echo "=== GEN DONE"

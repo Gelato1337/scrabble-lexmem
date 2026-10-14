@@ -6,7 +6,7 @@ Phase 2  refresh V, then per player-sequence U(s) = P(win) + (spread now + predi
 Phase 3  policy, PSTEPS: advantage-weighted likelihood  -w_i log pi(a_i | s_i),  w = min(exp(A / (BETA_A * sd(A))), WMAX), normalised;
          branch pairs (selfplay_v2.py): BCE(sigmoid(l_a - l_b), sigmoid(dU / TAU_B)) * WB  (shared-draw comparisons, low noise);
          KL(pi_start || pi) * BETA_KL keeps each round a small step; V keeps training on its targets.
-Usage: TRAIN=v2_w_g1_0,... INIT=ckpt TAG=v2_w_g1 python train_v2.py"""
+Usage: TRAIN=v2_w_g1_0,... INIT=ckpt TAG=v2_w_g1 PYTHONPATH=. python train/train_v2.py"""
 import os, time, math, copy, pickle, random, numpy as np, torch, torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from lexmem.core import *; from lexmem.policy import PolicyNet, MoveDataset, collate_moves

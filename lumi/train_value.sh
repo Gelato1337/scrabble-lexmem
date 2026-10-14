@@ -8,5 +8,5 @@
 source lumi/common.sh
 export PYTHONPATH=.
 # USE_LEX, TAG, RETR, LABELS via --export
-LABELS=${LABELS:-data/simlabels_hasty300k.pkl} STEPS=${STEPS:-10000} B=64 EVAL_EVERY=1000 python train_value.py
+LABELS=${LABELS:-data/simlabels_hasty300k.pkl} STEPS=${STEPS:-10000} B=64 EVAL_EVERY=1000 python train/train_value.py
 echo "=== VALUE DONE"

@@ -8,5 +8,5 @@
 source lumi/common.sh
 export PYTHONPATH=.
 # R, TAG via --export
-LABELS=${LABELS:-data/simlabels_fut_hasty.pkl,data/simlabels_fut_ei1.pkl} STEPS=${STEPS:-12000} B=48 EVAL_EVERY=2000 NEV=2000 RETR=data/lexmem_nwl.pt python train_future.py
+LABELS=${LABELS:-data/simlabels_fut_hasty.pkl,data/simlabels_fut_ei1.pkl} STEPS=${STEPS:-12000} B=48 EVAL_EVERY=2000 NEV=2000 RETR=data/lexmem_nwl.pt python train/train_future.py
 echo "=== FUTURE DONE"

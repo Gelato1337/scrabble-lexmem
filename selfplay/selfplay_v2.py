@@ -3,7 +3,7 @@ Branching (common random numbers): at a fraction P_BRANCH of positions, the chos
 policy's top BK moves, excluding a) are each played out to the end of the game with the greedy policy, from the same bag order
 (per-player priority orders over tile instances, shared by both branches), so the draws are shared wherever the bag allows. rec["branch"] = (b, dU) with
 dU = U(a) - U(b), U = win (1 / 0.5 / 0) + final spread / 400, from the mover's view: a low-noise comparison of two moves.
-Usage: CKPT=... PTEMP=1.0 P_BRANCH=0.04 NPROC=124 TAG=v2_w_g1_0 python selfplay_v2.py NGAMES SEED0"""
+Usage: CKPT=... PTEMP=1.0 P_BRANCH=0.04 NPROC=124 TAG=v2_w_g1_0 PYTHONPATH=. python selfplay/selfplay_v2.py NGAMES SEED0"""
 import os, sys, time, pickle, random, numpy as np, torch, multiprocessing as mp
 torch.set_num_threads(1)
 NG = int(sys.argv[1]); SEED0 = int(sys.argv[2]) if len(sys.argv) > 2 else 100000

@@ -3,7 +3,7 @@ its top-16 candidates and simulated win %): run the net, take its argmax, and pr
 cost = teacher's best win % - win % of the net's move (when the net's move is among the teacher's candidates; otherwise the cost is
 at least best - worst listed candidate, reported separately). Positions decided without a sim (endgame / pre-endgame) have only
 the teacher's move, so they give agreement but no cost. Teacher exchanges count as disagreements (the net may not exchange).
-Usage: CKPT=data/policy_simsoft_scratch_nolex.pt TEST=simsoft_31 EXCH=0 python diag_cost.py"""
+Usage: CKPT=data/policy_simsoft_scratch_nolex.pt TEST=simsoft_31 EXCH=0 PYTHONPATH=. python eval/diag_cost.py"""
 import os, pickle, collections, numpy as np, torch
 from torch.utils.data import DataLoader, Dataset
 from lexmem.core import *; from lexmem.policy import PolicyNet, MoveDataset, collate_moves

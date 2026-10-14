@@ -6,7 +6,7 @@ Exploration: with prob EPS (and on the first OPEN_TURNS turns) sample softmax(ut
 Luck bookkeeping: at each of a player's turns, K alternative racks they could have drawn after their previous move
 (previous leave + a draw from the tiles that were unseen to them, consistent with the current board) -> rec["alt_racks"];
 train_td.py prices the actual rack against them (draw luck) and uses their mean as the luck-free bootstrap value.
-Usage: CKPT=... ACT=q NPROC=120 TAG=td_x_g1_0 python selfplay_td.py NGAMES SEED0 -> data/games_{TAG}.pkl"""
+Usage: CKPT=... ACT=q NPROC=120 TAG=td_x_g1_0 PYTHONPATH=. python selfplay/selfplay_td.py NGAMES SEED0 -> data/games_{TAG}.pkl"""
 import os, sys, time, pickle, random, numpy as np, torch, multiprocessing as mp
 torch.set_num_threads(1)
 NG = int(sys.argv[1]); SEED0 = int(sys.argv[2]) if len(sys.argv) > 2 else 100000

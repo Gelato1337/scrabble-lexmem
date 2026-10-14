@@ -6,7 +6,7 @@ Protocol (little-endian, one request -> one response, in order, on a Unix socket
             widx i32[T], mf f32[T*9] (columns 0-8 of the move features; column 8 = exchange flag), leave u8[T*27]
   response: f32 logits[T] (policy head), f32 values[npos*2] (TD value head: spread change / 100, win logit)
 Also writes data/lexwords.txt (our lexicon's word order, which widx indexes) at start.
-Usage: CKPT=data/policy_X.pt SOCK=/tmp/lexmem.sock python server_infer.py"""
+Usage: CKPT=data/policy_X.pt SOCK=/tmp/lexmem.sock PYTHONPATH=. python selfplay/server_infer.py"""
 import os, socket, struct, time, numpy as np, torch
 from lexmem.core import Lexicon
 from lexmem.policy import PolicyNet, MF

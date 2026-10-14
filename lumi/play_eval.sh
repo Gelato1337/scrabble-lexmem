@@ -8,5 +8,5 @@
 source lumi/common.sh
 export MACONDO=/scratch/project_462001611/macondo PYTHONPATH=.
 # CKPT, USE_LEX, RETR via --export
-NPROC=${NPROC:-60} python play_eval.py ${NG:-2000} || exit 1
+NPROC=${NPROC:-60} python eval/play_eval.py ${NG:-2000} || exit 1
 echo "=== PLAY EVAL DONE"

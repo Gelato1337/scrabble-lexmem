@@ -7,5 +7,5 @@
 #SBATCH --output=logs/belief_%j.out
 source lumi/common.sh
 export PYTHONPATH=.
-STEPS=${STEPS:-8000} B=128 EVAL_EVERY=1000 TAG=${TAG:-hasty} python train_belief.py
+STEPS=${STEPS:-8000} B=128 EVAL_EVERY=1000 TAG=${TAG:-hasty} python train/train_belief.py
 echo "=== BELIEF DONE"

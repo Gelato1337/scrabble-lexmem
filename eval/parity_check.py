@@ -1,7 +1,7 @@
 """Check the Go self-play engine (PARITY=1 output) against our Python pipeline, position by position:
 1. move sets: Go's tokens (Macondo movegen, top 400 by score + exchanges) vs MoveDataset.build (our movegen): coverage and scores;
 2. logits: the net on the Python-built item vs the logits the GPU server returned to Go, on the moves both contain.
-Usage: CKPT=... python parity_check.py data/sp_parity.jsonl [max_positions]"""
+Usage: CKPT=... PYTHONPATH=. python eval/parity_check.py data/sp_parity.jsonl [max_positions]"""
 import os, sys, json, numpy as np, torch
 from lexmem.core import *; from lexmem.policy import PolicyNet, MoveDataset, collate_moves
 torch.backends.mha.set_fastpath_enabled(False)

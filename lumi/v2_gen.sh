@@ -9,5 +9,5 @@ source lumi/common.sh
 export PYTHONPATH=.
 I=${SLURM_ARRAY_TASK_ID:-0}; CKPT=$(cat data/v2_best_${ARM}.txt)
 echo "generator net: $CKPT"
-CKPT=$CKPT NPROC=${NPROC:-124} TAG=v2_${ARM}_g${R}_$I python selfplay_v2.py $NGT $((SEEDBASE + I * 100000)) || exit 1
+CKPT=$CKPT NPROC=${NPROC:-124} TAG=v2_${ARM}_g${R}_$I python selfplay/selfplay_v2.py $NGT $((SEEDBASE + I * 100000)) || exit 1
 echo "=== GEN DONE"

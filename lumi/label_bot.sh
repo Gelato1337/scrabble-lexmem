@@ -11,5 +11,5 @@ source lumi/common.sh
 export MACONDO=/scratch/project_462001611/macondo PYTHONPATH=. BOT_MEM=${BOT_MEM:-1GiB}
 I=${SLURM_ARRAY_TASK_ID:-0}; GPT=${GPT:-1000}; G_OFF=${G_OFF:-0}
 TEACHER=${TEACHER:-SIMMING_BOT} SECS=${SECS:-10} NPROC=${NPROC:-64} CORES_PER_WORKER=2 SRC=${SRC:-hasty_train} \
-  python label_bot.py $((G_OFF+I*GPT)) $((G_OFF+(I+1)*GPT)) ${TAG:-simbot}_$I || exit 1
+  python prep/label_bot.py $((G_OFF+I*GPT)) $((G_OFF+(I+1)*GPT)) ${TAG:-simbot}_$I || exit 1
 echo "=== LABEL DONE"

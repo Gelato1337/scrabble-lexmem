@@ -6,6 +6,6 @@
 #SBATCH --job-name=lex-gen
 #SBATCH --output=logs/gen_%j.out
 source lumi/common.sh
-NPROC=62 python gen_games.py 4000 big 1000
-NPROC=62 python gen_games.py 300 bigtest 900000
+NPROC=62 python prep/gen_games.py 4000 big 1000
+NPROC=62 python prep/gen_games.py 300 bigtest 900000
 echo "=== GEN DONE"

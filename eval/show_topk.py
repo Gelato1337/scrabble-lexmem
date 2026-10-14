@@ -1,11 +1,11 @@
 """Render held-out mid-game positions with the policy net's top-5 moves, next to HastyBot's and SIMMING_BOT's choices.
 Positions: data/games_{SRC}.pkl (default hasty_test, never trained on), bag 30-60 tiles, the mover's actual move a play.
-Usage: CKPT=data/policy_imit3_nolex.pt SRC=hasty_test NPOS=6 SECS=10 python show_topk.py docs/samples
+Usage: CKPT=data/policy_imit3_nolex.pt SRC=hasty_test NPOS=6 SECS=10 PYTHONPATH=. python eval/show_topk.py docs/samples
 Writes <out>/position_<i>.png and <out>/positions.md (the same numbers as text)."""
 import os, sys, random, numpy as np, torch
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt; from matplotlib.patches import Rectangle
 from lexmem.core import *; from lexmem.policy import PolicyNet, MoveDataset, collate_moves
-from harness import MacondoBot
+from lexmem.harness import MacondoBot
 E = os.environ.get; torch.set_num_threads(4)
 OUT = sys.argv[1] if len(sys.argv) > 1 else "docs/samples"; os.makedirs(OUT, exist_ok=True)
 lex = Lexicon(E("LEXICON", "data/NWL23.txt")); CKPT = E("CKPT", "data/policy_imit3_nolex.pt")

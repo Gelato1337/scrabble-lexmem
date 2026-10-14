@@ -8,5 +8,5 @@
 source lumi/common.sh
 export MACONDO=/scratch/project_462001611/macondo PYTHONPATH=.
 # CKPT, USE_LEX, TAG, NG, SEED0 via --export
-NPROC=${NPROC:-60} python selfplay.py ${NG:-15000} ${SEED0:-100000}
+NPROC=${NPROC:-60} python selfplay/selfplay.py ${NG:-15000} ${SEED0:-100000}
 echo "=== SP GEN DONE"

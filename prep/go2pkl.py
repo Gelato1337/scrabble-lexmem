@@ -1,7 +1,9 @@
 """Go engine output (one JSON line per game, bin/lexmem_selfplay) -> our trajectory pickle (data/games_{TAG}.pkl), as read by
 train_v2.py / train_branch.py. Plays get their letters from designate() (blanks on the best squares, the same score Macondo used);
 branches become rec["branch"] = (alternative move tuple, dU).
-Usage: python go2pkl.py data/sp_x.jsonl TAG"""
+BRANCH_ONLY=1 keeps only the positions that carry a branch pair (enough for train_branch.py; ~10x smaller).
+Usage: PYTHONPATH=. python prep/go2pkl.py data/sp_x.jsonl TAG"""
+import os
 import sys, json, pickle, numpy as np
 from lexmem.core import *
 lex = Lexicon("data/NWL23.txt"); games = []; nbr = 0
@@ -22,6 +24,7 @@ for line in open(sys.argv[1]):
         if "br" in p:
             alt = [int(x) for x in p["br"][1:]]; rec["branch"] = (tup(alt), float(p["br"][0])); nbr += 1
         traj.append(rec)
+    if os.environ.get("BRANCH_ONLY") == "1": traj = [r for r in traj if "branch" in r]
     games.append((traj, tuple(g["final"])))
 pickle.dump(games, open(f"data/games_{sys.argv[2]}.pkl", "wb"))
 print(f"{len(games)} games, {sum(len(t) for t, _ in games)} positions, {nbr} branch pairs -> data/games_{sys.argv[2]}.pkl")

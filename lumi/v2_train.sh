@@ -7,5 +7,5 @@
 # Track A v2 training from the current best net. Env: ARM R TRAIN (+ train_v2.py knobs)
 source lumi/common.sh
 export PYTHONPATH=.
-INIT=$(cat data/v2_best_${ARM}.txt) TAG=v2_${ARM}_g$R python train_v2.py || exit 1
+INIT=$(cat data/v2_best_${ARM}.txt) TAG=v2_${ARM}_g$R python train/train_v2.py || exit 1
 echo "=== V2 TRAIN DONE"

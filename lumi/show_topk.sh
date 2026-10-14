@@ -7,5 +7,5 @@
 #SBATCH --output=logs/show_topk_%j.out
 source lumi/common.sh
 export MACONDO=/scratch/project_462001611/macondo PYTHONPATH=. BOT_MEM=1GiB
-python show_topk.py ${OUT:-docs/samples} || exit 1
+python eval/show_topk.py ${OUT:-docs/samples} || exit 1
 echo "=== SHOW DONE"

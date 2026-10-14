@@ -1,7 +1,7 @@
 """
 Play games: our policy (Python engine, NWL23) vs HastyBot (Macondo shell as a subprocess).
 Game state is kept in Python; HastyBot receives the position as CGP and answers with its top-equity play.
-Usage: MACONDO=~/opt/macondo python harness.py --games 4 --policy greedy
+Usage: MACONDO=~/opt/macondo python -m lexmem.harness --games 4 --policy greedy
 """
 import os, sys, re, subprocess, time, random, argparse, numpy as np
 from lexmem.core import *

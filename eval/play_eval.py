@@ -1,5 +1,5 @@
 """Parallel evaluation of a policy checkpoint vs HastyBot (CPU, one Macondo shell per worker).
-Usage: CKPT=data/policy_imit_nolex.pt USE_LEX=0 NPROC=60 python play_eval.py 2000 [seed0]"""
+Usage: CKPT=data/policy_imit_nolex.pt USE_LEX=0 NPROC=60 PYTHONPATH=. python eval/play_eval.py 2000 [seed0]"""
 import os, sys, time, pickle, random, numpy as np, torch, multiprocessing as mp
 torch.set_num_threads(1)
 NG = int(sys.argv[1]); SEED0 = int(sys.argv[2]) if len(sys.argv) > 2 else 10000
@@ -17,7 +17,7 @@ def bot_cpus():
 def init():
     from lexmem.core import Lexicon
     from lexmem.policy import PolicyNet, MoveDataset
-    from harness import HastyBot, MacondoBot
+    from lexmem.harness import HastyBot, MacondoBot
     lex = Lexicon(LEXICON); model = PolicyNet(lex, use_lex=USE_LEX)
     sd = torch.load(CKPT, map_location="cpu"); model.load_state_dict(sd, strict=False); model.eval()
     if USE_LEX: model.refresh_keys()
@@ -31,7 +31,7 @@ def init():
 def one(g):
     from lexmem.core import legal_moves
     from lexmem.policy import collate_moves, MAXM
-    from harness import play_vs_hasty
+    from lexmem.harness import play_vs_hasty
     lex, model, helper = G["lex"], G["model"], G["helper"]
     from lexmem.search import choose_move
     from lexmem.sim import sim_choose, vsearch_choose

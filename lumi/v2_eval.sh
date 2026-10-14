@@ -10,7 +10,7 @@ set -o pipefail
 source lumi/common.sh
 export MACONDO=/scratch/project_462001611/macondo PYTHONPATH=.
 C=data/policy_v2_${ARM}_g$R.pt
-CKPT=$C ACT=policy EXCH=1 OPP=hasty TAGE=_v2 NPROC=60 python play_eval.py 4000 777000 | tee logs/v2_eval_${ARM}_g$R.txt || exit 1
+CKPT=$C ACT=policy EXCH=1 OPP=hasty TAGE=_v2 NPROC=60 python eval/play_eval.py 4000 777000 | tee logs/v2_eval_${ARM}_g$R.txt || exit 1
 NEW=$(grep "^FINAL" logs/v2_eval_${ARM}_g$R.txt | sed -E "s/.*win rate ([0-9.]+).*/\1/"); BEST=$(cat data/v2_best_${ARM}.score)
 if python -c "import sys; sys.exit(0 if float('$NEW') >= float('$BEST') else 1)"; then
   echo $C > data/v2_best_${ARM}.txt; echo $NEW > data/v2_best_${ARM}.score; echo "GATE: accepted $C ($NEW >= $BEST)"

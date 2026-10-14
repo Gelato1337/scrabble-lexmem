@@ -1,6 +1,6 @@
 """Cross-tables GCGs -> data/games_{tag}_train.pkl / _test.pkl (our trajectory format, see lexmem/gcg.py).
 Duplicates (the same game annotated by both players) are collapsed on the move sequence; the test split is by game hash.
-Usage: LEXICON=data/NWL23.txt NPROC=60 python gcg_all.py data/xt/gcg human 1000"""
+Usage: LEXICON=data/NWL23.txt NPROC=60 PYTHONPATH=. python prep/gcg_all.py data/xt/gcg human 1000"""
 import sys, os, glob, pickle, time, hashlib, collections, multiprocessing as mp
 from lexmem.core import Lexicon
 from lexmem.gcg import replay_gcg

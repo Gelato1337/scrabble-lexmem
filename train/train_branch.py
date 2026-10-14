@@ -3,7 +3,7 @@ Train the policy only on the branch pairs of the training games (gi % HOLD != 0)
   BCE(sigmoid(l_a - l_b), sigmoid(dU / TAU_B)) + BETA_KL * KL(pi_start || pi)
 for EPOCHS passes; after each pass, held-out pairs (gi % HOLD == 0): sign agreement of l_a - l_b with dU (0.5 = no signal) and the
 correlation, overall and by phase. Learning beyond the start net = held-out agreement rising above the start net's.
-Usage: TRAIN=v2_w_g2_0,... INIT=data/policy_v2_w_g1.pt TAG=v2_w_branch EPOCHS=5 python train_branch.py"""
+Usage: TRAIN=v2_w_g2_0,... INIT=data/policy_v2_w_g1.pt TAG=v2_w_branch EPOCHS=5 PYTHONPATH=. python train/train_branch.py"""
 import os, time, math, copy, pickle, random, numpy as np, torch, torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from lexmem.core import *; from lexmem.policy import PolicyNet, MoveDataset, collate_moves

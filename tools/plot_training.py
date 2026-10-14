@@ -1,4 +1,4 @@
-"""Training-curve figure from LUMI logs. Usage: python plot_training.py out.png"""
+"""Training-curve figure from LUMI logs. Usage: PYTHONPATH=. python tools/plot_training.py out.png"""
 import re, sys, numpy as np, matplotlib
 matplotlib.use("Agg"); import matplotlib.pyplot as plt
 BLUE, ORANGE, INK, INK2, GRID, SURF = "#2a78d6", "#eb6834", "#1a1a19", "#5f5e58", "#e6e5e0", "#fcfcfb"

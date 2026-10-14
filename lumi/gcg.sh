@@ -6,6 +6,6 @@
 #SBATCH --job-name=gcg-replay
 #SBATCH --output=logs/gcg_%j.out
 source lumi/common.sh
-PYTHONPATH=. NPROC=60 LEXICON=data/NWL23.txt python gcg_all.py data/xt/gcg human 1000
+PYTHONPATH=. NPROC=60 LEXICON=data/NWL23.txt python prep/gcg_all.py data/xt/gcg human 1000
 ls -la data/games_human_*.pkl
 echo "=== GCG DONE"

@@ -8,7 +8,7 @@ no teacher, no search.
    (LUCK=1): the value of the position before my draw is known, so my draw luck does not leak into the target.
    Draw luck at s_{i+1} = V(actual rack) - Vbar; reported per game as a variance-reduction diagnostic.
 3. Train Q(s, a_chosen) -> (G, W) on move tokens (with moves) and V(s) -> (G, W) on the position-only pass.
-Usage: TRAIN=td_x_g1_0,... INIT=ckpt TAG=td_x_g1 STEPS=8000 python train_td.py"""
+Usage: TRAIN=td_x_g1_0,... INIT=ckpt TAG=td_x_g1 STEPS=8000 PYTHONPATH=. python train/train_td.py"""
 import os, time, math, pickle, random, numpy as np, torch, torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from lexmem.core import *; from lexmem.policy import PolicyNet, MoveDataset, collate_moves

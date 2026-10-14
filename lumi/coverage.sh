@@ -6,5 +6,5 @@
 #SBATCH --job-name=lex-coverage
 #SBATCH --output=logs/coverage_%j.out
 source lumi/common.sh
-TEST=bigtest CKPT=data/lexmem_noslot.pt SLOT=0 OUT=data/coverage_noslot.pkl python eval_coverage.py
+TEST=bigtest CKPT=data/lexmem_noslot.pt SLOT=0 OUT=data/coverage_noslot.pkl python eval/eval_coverage.py
 echo "=== COVERAGE DONE"

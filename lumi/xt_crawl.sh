@@ -9,5 +9,5 @@
 # Stdlib only: runs on the node's system python, not the pytorch container (its image load can hang for minutes).
 cd /scratch/project_462001611/scrabble-lexmem
 export PYTHONUNBUFFERED=1
-/usr/bin/python3 xt_crawl.py gcg ${LEXICONS:-NWL,TWL}
+/usr/bin/python3 prep/xt_crawl.py gcg ${LEXICONS:-NWL,TWL}
 echo "=== CRAWL DONE $(ls data/xt/gcg | wc -l) files"

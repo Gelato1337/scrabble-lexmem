@@ -1,6 +1,6 @@
 """Label positions with 2-ply Monte-Carlo sim estimates for their top-K candidates (CPU, many procs).
 Output: data/simlabels_{TAG}.pkl = list of dicts: position fields + cands [(score,r,c,d,L,widx,letters,equity)] + est [K floats].
-Usage: NPROC=48 TAG=hasty300k python label_sim.py <n_positions> [seed]"""
+Usage: NPROC=48 TAG=hasty300k PYTHONPATH=. python prep/label_sim.py <n_positions> [seed]"""
 import os, sys, time, pickle, random, numpy as np, torch, multiprocessing as mp
 torch.set_num_threads(1)
 E = os.environ.get; NPOS = int(sys.argv[1]); SEED0 = int(sys.argv[2]) if len(sys.argv) > 2 else 0

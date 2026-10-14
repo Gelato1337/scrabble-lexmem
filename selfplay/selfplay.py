@@ -1,5 +1,5 @@
 """Self-play: net vs net with 1-ply search, many CPU processes. Writes data/games_{TAG}.pkl in our trajectory format.
-Usage: CKPT=data/policy_X.pt USE_LEX=0 NPROC=60 TAG=sp1 python selfplay.py NGAMES [seed0]"""
+Usage: CKPT=data/policy_X.pt USE_LEX=0 NPROC=60 TAG=sp1 PYTHONPATH=. python selfplay/selfplay.py NGAMES [seed0]"""
 import os, sys, time, pickle, random, numpy as np, torch, multiprocessing as mp
 torch.set_num_threads(1)
 NG = int(sys.argv[1]); SEED0 = int(sys.argv[2]) if len(sys.argv) > 2 else 100000

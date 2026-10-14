@@ -5,11 +5,11 @@ play (known=True) or, for an exchange/pass/unparseable answer, kept but marked k
 The game continuation (and so the value targets) stays HastyBot's.
 CANDS=K also stores the sim's top-K candidates as soft targets: rec["cands"] = [(r,c,d,L,widx)], rec["cand_est"] = win % (x100),
 rec["cand_eq"], rec["cand_iters"]; positions decided without a sim (endgame / pre-endgame) get the teacher move alone (est 100).
-Usage: TEACHER=SIMMING_BOT SECS=10 NPROC=64 SRC=hasty_train python label_bot.py G0 G1 TAG  -> data/games_{TAG}.pkl"""
+Usage: TEACHER=SIMMING_BOT SECS=10 NPROC=64 SRC=hasty_train PYTHONPATH=. python prep/label_bot.py G0 G1 TAG  -> data/games_{TAG}.pkl"""
 import os, sys, time, pickle, multiprocessing as mp, numpy as np
 from lexmem.core import *
 from lexmem.replay import score_placement
-from harness import MacondoBot, macondo_play_to_letters
+from lexmem.harness import MacondoBot, macondo_play_to_letters
 E = os.environ.get
 TEACHER = E("TEACHER", "SIMMING_BOT"); SECS = float(E("SECS", 10)); SRC = E("SRC", "hasty_train"); CPW = int(E("CORES_PER_WORKER", 2))
 G = {}

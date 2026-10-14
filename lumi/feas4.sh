@@ -6,5 +6,5 @@
 #SBATCH --job-name=lex-feas4
 #SBATCH --output=logs/feas4_%j.out
 source lumi/common.sh
-TRAIN=big TEST=bigtest STEPS=30000 B=48 K=4 EVAL_EVERY=2000 TAG=latent INIT=data/lexmem_base.pt python feas4_latent.py
+TRAIN=big TEST=bigtest STEPS=30000 B=48 K=4 EVAL_EVERY=2000 TAG=latent INIT=data/lexmem_base.pt python feasibility/feas4_latent.py
 echo "=== FEAS4 DONE"

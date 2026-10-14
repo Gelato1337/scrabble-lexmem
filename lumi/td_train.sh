@@ -7,5 +7,5 @@
 # Track A TD training. Env: TRAIN INIT TAG LAM STEPS LR
 source lumi/common.sh
 export PYTHONPATH=.
-python train_td.py || exit 1
+python train/train_td.py || exit 1
 echo "=== TD TRAIN DONE"

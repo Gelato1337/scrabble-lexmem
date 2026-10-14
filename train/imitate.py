@@ -68,7 +68,7 @@ for b in dl:
     if step >= STEPS: break
 acc, vmae = evaluate("final")
 if PLAY:
-    from harness import HastyBot, play_vs_hasty
+    from lexmem.harness import HastyBot, play_vs_hasty
     hasty = HastyBot(); model.eval(); helper = MoveDataset(lex, games_te, use_lex=USE_LEX)
     @torch.no_grad()
     def net_policy(lex_, board, blanks, cc, rack, unseen, rng):
