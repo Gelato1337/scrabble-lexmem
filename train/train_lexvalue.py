@@ -17,8 +17,9 @@ import warnings; warnings.filterwarnings("ignore")
 E = os.environ.get; dev = "cuda" if torch.cuda.is_available() else "cpu"
 ARM = E("ARM", "lex"); LEXARM = ARM == "lex"; NL = int(E("NLANES", 12)); CAP = int(E("CAP", 256)); STEPS = int(E("STEPS", 40000))
 B = int(E("B", 64)); LR = float(E("LR", 2e-4)); HOLD = int(E("HOLDOUT_MOD", 20)); NW = int(E("NWORK", 24)); TAG = E("TAG", f"lexvalue_{ARM}")
-AUXW = float(E("AUX_W", 0.5)); NEV = int(E("NEV", 4000)); D = 256
-torch.manual_seed(0); random.seed(0); np.random.seed(0)
+AUXW = float(E("AUX_W", 0.5)); NEV = int(E("NEV", 4000)); NEV_SUB = int(E("NEV_SUB", 4000)); D = 256
+TARGET = E("TARGET", "outcome")   # outcome: the game's own result; ro: mean of K rollouts from the afterstate (rec["ro"])
+SEED = int(E("SEED", 0)); torch.manual_seed(SEED); random.seed(SEED); np.random.seed(SEED)
 lex = Lexicon(E("LEXICON", "data/NWL23.txt"))
 
 def pick_lanes(b2):
@@ -47,10 +48,15 @@ def build(rec, final_scores, nxt):
     if w0 is None: return None
     b2, bl2, leave, _ = apply_move(lex, rec["board"], rec["blanks"], rec["rack"], r0, c0, d0, L0, w0)
     unseen = rec["unseen"]; me = rec["mover"]; sp_after = rec["scores"][0] + s - rec["scores"][1]
-    fin = (final_scores[me] - final_scores[1 - me]); G = np.float32((fin - sp_after) / 100); W = np.float32(1.0 if fin > 0 else 0.5 if fin == 0 else 0.0)
+    if TARGET == "ro":
+        if "ro" not in rec: return None
+        G = np.float32((rec["ro"][0] - sp_after) / 100); W = np.float32(rec["ro"][1])
+    else:
+        fin = (final_scores[me] - final_scores[1 - me]); G = np.float32((fin - sp_after) / 100); W = np.float32(1.0 if fin > 0 else 0.5 if fin == 0 else 0.0)
     cc = cross_checks(lex, b2, bl2); ln = pick_lanes(b2)
     if not ln: return None
     aux_key = None
+    if nxt is None and "next_move" in rec: nxt = dict(move=rec["next_move"])
     if nxt is not None and nxt["move"][0] == "play":   # the opponent's actual next play, as (lane, word)
         _, r1, c1, d1, L1, let1, _ = nxt["move"]; dr1, dc1 = ((0, 1), (1, 0))[d1]
         aux_key = ((r1, c1, d1, L1), lex.WIDX.get("".join(LET[b2[r1 + dr1 * j, c1 + dc1 * j]] if ch == "." else ch.upper() for j, ch in enumerate(let1))))
@@ -136,12 +142,18 @@ class DS(Dataset):
     def __getitem__(self, i):
         while True:
             gi, ti = self.keys[self.rng.randrange(len(self.keys))]; tr, fs = games[gi]
-            it = build(tr[ti], fs, tr[ti + 1] if ti + 1 < len(tr) else None)
+            it = build(tr[ti], fs, None if "next_move" in tr[ti] else (tr[ti + 1] if ti + 1 < len(tr) else None))
             if it is not None: return it
+class DSfixed(Dataset):
+    def __init__(self, keys): self.keys = keys
+    def __len__(self): return len(self.keys)
+    def __getitem__(self, i):
+        gi, ti = self.keys[i]; tr, fs = games[gi]
+        return build(tr[ti], fs, None if "next_move" in tr[ti] else (tr[ti + 1] if ti + 1 < len(tr) else None))
 
 if __name__ == "__main__":
     games = [g for t in E("TRAIN").split(",") for g in pickle.load(open(f"data/games_{t}.pkl", "rb"))]
-    keys_all = [(gi, ti) for gi, (tr, _) in enumerate(games) for ti, r in enumerate(tr) if r["move"][0] == "play"]
+    keys_all = [(gi, ti) for gi, (tr, _) in enumerate(games) for ti, r in enumerate(tr) if r["move"][0] == "play" and (TARGET != "ro" or "ro" in r)]
     train = [k for k in keys_all if k[0] % HOLD != 0]; held = [k for k in keys_all if k[0] % HOLD == 0]
     print(f"ARM={ARM}: {len(games)} games, {len(train)} train / {len(held)} held-out afterstates", flush=True)
     model = LexValue().to(dev)
@@ -155,24 +167,26 @@ if __name__ == "__main__":
         print("query encoder (and word encoder) from", E("INIT_FUT"), flush=True)
     print(f"trainable params {sum(p.numel() for p in model.parameters() if p.requires_grad)/1e6:.2f}M", flush=True)
     rs = random.Random(7); ev_keys = rs.sample(held, min(NEV, len(held)))
-    EV = [x for x in (build(games[gi][0][ti], games[gi][1], games[gi][0][ti + 1] if ti + 1 < len(games[gi][0]) else None) for gi, ti in ev_keys) if x is not None]
+    EV = [x for chunk in DataLoader(DSfixed(ev_keys), batch_size=256, num_workers=NW, collate_fn=lambda b: b) for x in chunk if x is not None]
     @torch.no_grad()
-    def evaluate(tag):
-        model.eval(); rows = []
-        for i in range(0, len(EV), 64):
-            b = {k: v.to(dev) for k, v in collate(EV[i:i + 64]).items()}
+    def evaluate(tag, full=False):
+        model.eval(); rows = []; ev = EV if full else EV[:NEV_SUB]
+        for i in range(0, len(ev), 64):
+            b = {k: v.to(dev) for k, v in collate(ev[i:i + 64]).items()}
             with torch.autocast(dev, dtype=torch.bfloat16, enabled=dev == "cuda"): v, al = model(b)
             v = v.float(); ll = F.binary_cross_entropy_with_logits(v[:, 1], b["W"], reduction="none")
-            for j in range(len(b["G"])): rows.append((float((v[j, 0] - b["G"][j]).abs()) * 100, float(ll[j]), int(b["bag"][j])))
+            for j in range(len(b["G"])): rows.append((float((v[j, 0] - b["G"][j]).abs()) * 100, float(ll[j]), int(b["bag"][j]), float(v[j, 0] - b["G"][j]) ** 2, float(b["G"][j])))
             if LEXARM:
                 a = b["aux"].flatten(); m = a >= 0
                 if m.any():
                     top = al.float()[m].topk(min(8, al.shape[1]), 1).indices; rows_aux.append(((top == a[m][:, None]).any(1).float().cpu().numpy()))
         model.train(); r = np.array(rows)
-        line = f"[{tag}] held-out n={len(r)}: spread MAE {r[:,0].mean():.2f} pts, win log-loss {r[:,1].mean():.4f}"
+        def r2(k): return 1 - r[k, 3].mean() / max(r[k, 4].var(), 1e-9)
+        allk = np.ones(len(r), dtype=bool)
+        line = f"[{tag}] held-out n={len(r)}: spread R2 {r2(allk):.3f} MAE {r[:,0].mean():.2f} pts, win log-loss {r[:,1].mean():.4f}"
         for lo, hi, nm in ((61, 100, "opening"), (31, 60, "middle"), (8, 30, "late"), (0, 7, "pre-end/end")):
             k = (r[:, 2] >= lo) & (r[:, 2] <= hi)
-            if k.sum(): line += f" | {nm}: MAE {r[k,0].mean():.1f}, LL {r[k,1].mean():.3f}"
+            if k.sum(): line += f" | {nm}: R2 {r2(k):.3f}, LL {r[k,1].mean():.3f}"
         if LEXARM and rows_aux: line += f" | opp next word in top-8 of its lane: {np.concatenate(rows_aux).mean():.3f}"
         rows_aux.clear(); print(line, flush=True)
     rows_aux = []
@@ -193,4 +207,4 @@ if __name__ == "__main__":
         if step % 200 == 0: print(f"step {step} t={time.time()-t0:.0f}s loss={la:.4f}", flush=True)
         if step % int(E("EVAL_EVERY", 4000)) == 0 or step == STEPS: evaluate(f"step {step}"); torch.save(model.state_dict(), f"data/{TAG}.pt")
         if step >= STEPS: break
-    print(f"=== saved data/{TAG}.pt", flush=True)
+    evaluate("final, all eval afterstates", full=True); print(f"=== saved data/{TAG}.pt", flush=True)
