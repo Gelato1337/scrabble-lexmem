@@ -5,7 +5,8 @@
 // blanks, then highest score) + every exchange when the bag has >= 7 tiles.
 // Output: one JSON line per game (positions, chosen moves, final scores). PARITY=1 also stores each position's move list and logits.
 // Branching (P_BRANCH > 0): counterfactual pairs with shared draws, see rollout(). BK alternatives, H mover turns (0 = to the end).
-// Env: SOCK NGAMES CONC BATCH PTEMP SEED OUT LEXWORDS PARITY P_BRANCH BK H
+// Rollout targets (P_RO > 0): at that share of positions where a play is chosen, K_RO continuations -> rec "ro", see rolloutValue().
+// Env: SOCK NGAMES CONC BATCH PTEMP SEED OUT LEXWORDS PARITY P_BRANCH BK H P_RO K_RO
 package main
 
 import (
@@ -232,6 +233,38 @@ func rollout(g0 *game.Game, first *move.Move, mover, turn, H int, seed [32]byte,
 	return outcomeU(float64(gc.PointsFor(mover) - gc.PointsFor(1-mover)))
 }
 
+// ---- rollout value targets: K continuations from the afterstate of the chosen move, each with a fresh bag order and the
+// opponent's rack redrawn from the unseen tiles (only what the mover could know), played to the end by our policy (sampled
+// at ptemp). Returns mean final spread and mean win (1 / 0.5 / 0) from the mover's view, and the spread sd.
+func rolloutValue(g0 *game.Game, chosen *move.Move, mover, turn, K int, ptemp float64, rng *rand.Rand, mk func(*game.Game) *movegen.GordonGenerator, cl *Client) []float64 {
+	sum, sumsq, wins := 0.0, 0.0, 0.0
+	for k := 0; k < K; k++ {
+		gc := g0.Copy(); var sd [32]byte
+		binary.LittleEndian.PutUint64(sd[:], rng.Uint64()); binary.LittleEndian.PutUint64(sd[8:], rng.Uint64())
+		gc.SeedBag(sd); gc.Bag().Shuffle()
+		if _, err := gc.SetRandomRack(1-mover, nil); err != nil { panic(err) }
+		if err := gc.PlayMove(chosen, false, 0); err != nil { panic(err) }
+		gen := mk(gc); t := turn + 1
+		for gc.Playing() != pb.PlayState_GAME_OVER && t < 100 {
+			me := gc.PlayerOnTurn(); p := buildPos(gc, t); gen.SetGame(gc)
+			addTokens(p, gc, gen.GenAll(gc.RackFor(me), gc.Bag().TilesRemaining() >= 7))
+			if len(p.Tokens) == 0 { gc.PlayMove(move.NewPassMove(gc.RackFor(me).TilesOn(), gc.Alphabet()), false, 0); t++; continue }
+			rep := cl.Infer(p); kk := 0
+			mx := rep.Logits[0]; for _, v := range rep.Logits { if v > mx { mx = v } }
+			w := make([]float64, len(rep.Logits)); tot := 0.0
+			for i, v := range rep.Logits { w[i] = math.Exp(float64(v-mx) / math.Max(ptemp, 1e-3)); tot += w[i] }
+			x := rng.Float64() * tot
+			for kk = 0; kk < len(w)-1 && x > w[kk]; kk++ { x -= w[kk] }
+			if err := gc.PlayMove(p.Tokens[kk].Mv, false, 0); err != nil { panic(err) }
+			t++
+		}
+		sp := float64(gc.PointsFor(mover) - gc.PointsFor(1-mover)); sum += sp; sumsq += sp * sp
+		if sp > 0 { wins += 1 } else if sp == 0 { wins += 0.5 }
+	}
+	m := sum / float64(K)
+	return []float64{m, wins / float64(K), float64(K), math.Sqrt(math.Max(sumsq/float64(K)-m*m, 0))}
+}
+
 // ---- one game
 type PosRec struct {
 	Board  string     `json:"b"`
@@ -244,6 +277,7 @@ type PosRec struct {
 	Move   []int      `json:"mv"`
 	Moves  [][]int    `json:"moves,omitempty"`
 	Branch []float64  `json:"br,omitempty"` // [dU, then the alternative move's descriptor]
+	Ro     []float64  `json:"ro,omitempty"` // rollout value of the chosen move: [mean spread, mean win, K, spread sd]
 	Logits []float32  `json:"logits,omitempty"`
 }
 type GameRec struct {
@@ -259,7 +293,7 @@ func boardString(g *game.Game) string {
 	} }
 	return sb.String()
 }
-func playGame(g *game.Game, gen *movegen.GordonGenerator, cl *Client, seed int64, ptemp float64, parity bool, pBranch float64, bk, H int, mk func(*game.Game) *movegen.GordonGenerator) GameRec {
+func playGame(g *game.Game, gen *movegen.GordonGenerator, cl *Client, seed int64, ptemp float64, parity bool, pBranch float64, bk, H int, mk func(*game.Game) *movegen.GordonGenerator, pRo float64, kRo int) GameRec {
 	var s [32]byte; binary.LittleEndian.PutUint64(s[:], uint64(seed))
 	g.SeedBag(s); g.StartGame(); rng := rand.New(rand.NewSource(seed))
 	rec := GameRec{Seed: seed}; turn := 0
@@ -283,6 +317,7 @@ func playGame(g *game.Game, gen *movegen.GordonGenerator, cl *Client, seed int64
 				for k = 0; k < len(w)-1 && x > w[k]; k++ { x -= w[k] }
 			}
 			chosen = p.Tokens[k].Mv; pr.Move = p.Tokens[k].Desc
+			if p.Tokens[k].Desc[0] == 0 && pRo > 0 && rng.Float64() < pRo { pr.Ro = rolloutValue(g, p.Tokens[k].Mv, me, turn, kRo, ptemp, rng, mk, cl) }
 			if len(p.Tokens) > 1 && rng.Float64() < pBranch { // alternative b: sampled from the policy's top bk moves other than k
 				idx := make([]int, len(p.Tokens)); for i := range idx { idx[i] = i }
 				sort.Slice(idx, func(i, j int) bool { return rep.Logits[idx[i]] > rep.Logits[idx[j]] })
@@ -316,6 +351,7 @@ func main() {
 	for i, w := range strings.Split(strings.TrimSpace(string(words)), "\n") { wordIdx[w] = int32(i) }
 	ngames, conc, seed0 := envI("NGAMES", 100), envI("CONC", 256), int64(envI("SEED", 1)); ptemp := envF("PTEMP", 1.0); parity := os.Getenv("PARITY") == "1"
 	pBranch, bk, horizon := envF("P_BRANCH", 0), envI("BK", 6), envI("H", 3)
+	pRo, kRo := envF("P_RO", 0), envI("K_RO", 16)
 	cl := NewClient(os.Getenv("SOCK"), envI("BATCH", 512))
 	out, err := os.Create(os.Getenv("OUT"))
 	if err != nil { panic(err) }
@@ -337,7 +373,7 @@ func main() {
 			gen := movegen.NewGordonGenerator(gd, g.Board(), rules.LetterDistribution())
 			mk := func(gc *game.Game) *movegen.GordonGenerator { return movegen.NewGordonGenerator(gd, gc.Board(), rules.LetterDistribution()) }
 			for seed := range jobs {
-				r := playGame(g, gen, cl, seed, ptemp, parity, pBranch, bk, horizon, mk)
+				r := playGame(g, gen, cl, seed, ptemp, parity, pBranch, bk, horizon, mk, pRo, kRo)
 				mu.Lock(); enc.Encode(r); done++; npos += len(r.Pos)
 				if done%500 == 0 { el := time.Since(t0).Seconds(); fmt.Fprintf(os.Stderr, "%d games %.0fs  %.1f games/s  %.0f positions/s\n", done, el, float64(done)/el, float64(npos)/el) }
 				mu.Unlock()
