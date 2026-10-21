@@ -19,6 +19,7 @@ ARM = E("ARM", "lex"); LEXARM = ARM == "lex"; NL = int(E("NLANES", 12)); CAP = i
 B = int(E("B", 64)); LR = float(E("LR", 2e-4)); HOLD = int(E("HOLDOUT_MOD", 20)); NW = int(E("NWORK", 24)); TAG = E("TAG", f"lexvalue_{ARM}")
 AUXW = float(E("AUX_W", 0.5)); NEV = int(E("NEV", 4000)); NEV_SUB = int(E("NEV_SUB", 4000)); D = 256
 TARGET = E("TARGET", "outcome")   # outcome: the game's own result; ro: mean of K rollouts from the afterstate (rec["ro"])
+FREEZE_Q = E("FREEZE_Q", "0") == "1"; MAX_TRAIN = int(E("MAX_TRAIN", 0))   # frozen query encoder (both arms); fixed training subsample
 SEED = int(E("SEED", 0)); torch.manual_seed(SEED); random.seed(SEED); np.random.seed(SEED)
 lex = Lexicon(E("LEXICON", "data/NWL23.txt"))
 
@@ -155,6 +156,7 @@ if __name__ == "__main__":
     games = [g for t in E("TRAIN").split(",") for g in pickle.load(open(f"data/games_{t}.pkl", "rb"))]
     keys_all = [(gi, ti) for gi, (tr, _) in enumerate(games) for ti, r in enumerate(tr) if r["move"][0] == "play" and (TARGET != "ro" or "ro" in r)]
     train = [k for k in keys_all if k[0] % HOLD != 0]; held = [k for k in keys_all if k[0] % HOLD == 0]
+    if MAX_TRAIN and MAX_TRAIN < len(train): train = random.Random(123).sample(train, MAX_TRAIN)   # same subsample for every arm and seed
     print(f"ARM={ARM}: {len(games)} games, {len(train)} train / {len(held)} held-out afterstates", flush=True)
     model = LexValue().to(dev)
     if E("INIT_FUT"):
@@ -165,6 +167,9 @@ if __name__ == "__main__":
             model.refresh_keys()
             for p in model.wenc.parameters(): p.requires_grad_(False)   # word keys frozen: the memory, not a trainable embedding table
         print("query encoder (and word encoder) from", E("INIT_FUT"), flush=True)
+    if FREEZE_Q:
+        for p in model.qenc.parameters(): p.requires_grad_(False)
+    print(f"freeze_q={FREEZE_Q} max_train={MAX_TRAIN or 'all'} seed={SEED}", flush=True)
     print(f"trainable params {sum(p.numel() for p in model.parameters() if p.requires_grad)/1e6:.2f}M", flush=True)
     rs = random.Random(7); ev_keys = rs.sample(held, min(NEV, len(held)))
     EV = [x for chunk in DataLoader(DSfixed(ev_keys), batch_size=256, num_workers=NW, collate_fn=lambda b: b) for x in chunk if x is not None]
