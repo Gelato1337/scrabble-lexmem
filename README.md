@@ -206,6 +206,15 @@ flowchart TB
 Opponents run through `bin/lexmem_bot` (`cmd/lexmem_bot` in our Macondo checkout on LUMI), which plays any Macondo bot
 code and, with `CANDS=K`, also returns the sim's top-K candidates with win probabilities.
 
+### 7. The lexicon memory in controlled tests: no gain yet (Oct 15–22)
+Same data, same training, near-equal parameters, the only difference being retrieval over the whole lexicon. On which of two
+moves wins a shared-draw playout (251k held-out pairs) and on position value learned from our own rollouts (3 seeds; 10k–177k
+training positions), the memory arm is indistinguishable from the control — it predicts words well (opponent's next word in the
+top 8 of its lane: 0.42–0.44) but that has not turned into better evaluation. Round summary and next directions:
+[docs/round1_summary.md](docs/round1_summary.md).
+
+![Lexicon memory sample efficiency](docs/figures/lexmem_sample_efficiency.png)
+
 ## Repository layout
 
 | Folder | Contents |

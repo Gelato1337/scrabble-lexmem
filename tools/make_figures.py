@@ -72,3 +72,18 @@ ax.axhline(50, color=REF, lw=1.2, ls="--"); ax.text(-0.42, 50.3, "HastyBot", ha=
 ax.set_xticks(range(5)); ax.set_xticklabels(labs, fontsize=9); ax.set_ylim(45, 65); ax.set_ylabel("win rate vs HastyBot (%)"); ax.grid(axis="x", visible=False)
 ax.set_title("Handing the end of the game to Macondo", loc="left", fontsize=11)
 save(fig, "endgame_hybrid")
+
+# 5. lexicon memory, sample efficiency: held-out value quality vs training positions (rollout targets, frozen query encoder; 2 seeds)
+N = [10000, 50000, 177213]
+r2 = {"no lexicon memory": [[.124, .134], [.232, .231], [.279, .252]], "lexicon memory": [[.117, .117], [.243, .251], [.251, .262]]}
+ll = {"no lexicon memory": [[.4499, .4487], [.4391, .4391], [.4315, .4338]], "lexicon memory": [[.4502, .4467], [.4369, .4386], [.4340, .4332]]}
+fig, axes = plt.subplots(1, 2, figsize=(9, 3.6))
+for ax, data, lab in ((axes[0], r2, "held-out R² of the score difference (higher is better)"), (axes[1], ll, "held-out win log-loss (lower is better)")):
+    for (name, vals), col, dx in zip(data.items(), (S2, S1), (0.97, 1.03)):
+        m = [sum(v) / 2 for v in vals]
+        ax.plot([n * dx for n in N], m, color=col, lw=2, marker="o", ms=5, label=name)
+        for n, v in zip(N, vals): ax.scatter([n * dx] * 2, v, color=col, s=12, alpha=0.5, zorder=3)
+    ax.set_xscale("log"); ax.set_xticks(N); ax.set_xticklabels(["10k", "50k", "177k"]); ax.set_xlabel("training positions"); ax.set_title(lab, loc="left", fontsize=9.5)
+axes[0].legend(frameon=False, fontsize=9, loc="lower right")
+fig.suptitle("Lexicon memory vs none: value from our own rollouts (19,703 held-out positions; dots = seeds)", x=0.01, ha="left", fontsize=10.5)
+save(fig, "lexmem_sample_efficiency")

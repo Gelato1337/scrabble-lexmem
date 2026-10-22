@@ -84,3 +84,34 @@ after branch-only training 0.582 (pre-endgame 0.734): no learning beyond the sta
 Parity Go vs Python (300 positions): move scores identical; 99.6 % / 98.8 % move-set coverage; logit correlation ≥ 0.9993.
 A Python scoring bug for blank plays (premiums and cross words ignored) was found this way and fixed (`lexmem/core.py`
 `blank_penalty`, `designate`); Python self-play before 2026-10-13 used the inflated scores.
+
+## Lexicon memory: controlled tests (round 1)
+
+All on Go-engine self-play games of `v2_w_g1`; held out by game; the lex and no-lex arms have the same data, steps and
+(near-)equal trainable parameters. See [round1_summary.md](round1_summary.md).
+
+**Branch pairs** (which of two moves wins its shared-draw playout; 251,216 held-out pairs; 0.5 = no signal):
+
+| Net | Zero-shot | After 1 pass over 2.27M pairs |
+|---|---|---|
+| `simsoft_scratch_nolex` (50k subsample) | 0.605 (late 0.575) | 0.601–0.604 during training |
+| `simsoft_scratch_lex` | 0.608 all / 0.607 subsample (late 0.584) | 0.603 |
+| `v2_w_g1` (no-lex) | 0.609 | 0.606 |
+
+**Value of the afterstate** (`train/train_lexvalue.py`; 12 lexicon-free lanes x 2 sides; lex = retrieval over each side's exact
+rules mask, top 256 words; no-lex = the same query without retrieval):
+
+| Targets | Training positions | Seeds | R² lex / no-lex | Win log-loss lex / no-lex |
+|---|---|---|---|---|
+| one game's result | 5.85M (250k games) | 1 | — (MAE 52.1 / 52.5 pts) | 0.510 / 0.528 |
+| mean of 16 rollouts | 177k | 3 | 0.230 / 0.236 | 0.4372 / 0.4358 |
+| rollouts, frozen query encoder | 10k | 2 | 0.117 / 0.129 | 0.4485 / 0.4493 |
+| rollouts, frozen query encoder | 50k | 2 | 0.247 / 0.232 | 0.4378 / 0.4391 |
+| rollouts, frozen query encoder | 177k | 2 | 0.257 / 0.266 | 0.4336 / 0.4327 |
+
+Seed-to-seed spread of R² ≈ 0.01–0.04. Opponent next word in the top 8 of its lane (lex arm): 0.42–0.44 frozen, falling to
+~0.32 when the query encoder trains with the value loss.
+
+Rollout targets: `go/lexmem_selfplay` with `P_RO=0.1 K_RO=16` — at 10 % of positions, 16 continuations of the chosen move with
+a reshuffled bag and the opponent's rack redrawn from the unseen tiles, played to the end by the policy (80k games, 197k labelled
+positions, 1.5 h on 8 GPUs).
