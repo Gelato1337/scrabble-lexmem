@@ -28,7 +28,7 @@ def item(i, j):
     rec["move"] = ("play", r0, c0, d0, L0, designate(lex, r["board"], r["rack"], r0, c0, d0, L0, w0), sc)
     it = tlv.build(rec, (0, 0), None)
     if it is None: return None
-    it["G"], it["W"] = np.float32(eo / 50), np.float32(em / 50); it["pos"], it["cand"] = i, j
+    it["G"], it["W"] = np.float32(eo / 50), np.float32(em / 50); it["pos"], it["cand_j"] = i, j
     return it
 class DS(Dataset):
     def __init__(self, seed): self.rng = random.Random(seed)
@@ -42,7 +42,7 @@ class DSfix(Dataset):
     def __len__(self): return len(self.keys)
     def __getitem__(self, k): return item(*self.keys[k])
 def coll(items):
-    b = tlv.collate(items); b["pos"] = torch.tensor([it["pos"] for it in items]); b["cand"] = torch.tensor([it["cand"] for it in items]); return b
+    b = tlv.collate(items); b["pos"] = torch.tensor([it["pos"] for it in items]); b["cand_j"] = torch.tensor([it["cand_j"] for it in items]); return b   # not "cand": that is the lex arm's retrieval tensor
 
 model = tlv.LexValue().to(dev)
 sd = torch.load(E("INIT_FUT", "data/future_R1.pt"), map_location=dev)
@@ -64,7 +64,7 @@ def evaluate(tag):
         b = {kk: v.to(dev) for kk, v in coll(EV[k:k + 128]).items()}
         with torch.autocast(dev, dtype=torch.bfloat16, enabled=dev == "cuda"): v, _ = model(b)
         v = v.float().cpu().numpy() * 50
-        for t in range(len(v)): pred[(int(b["pos"][t]), int(b["cand"][t]))] = v[t]
+        for t in range(len(v)): pred[(int(b["pos"][t]), int(b["cand_j"][t]))] = v[t]
     model.train()
     yo, po, ym, pm, wo, wm = [], [], [], [], [], []; rows = []
     for i in held_pos:
