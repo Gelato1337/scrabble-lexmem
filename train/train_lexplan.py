@@ -14,6 +14,8 @@ from lexmem.core import *
 E = os.environ.get; dev = tlv.dev; lex = tlv.lex
 HOLD = int(E("HOLDOUT_MOD", 10)); MAX_TRAIN = int(E("MAX_TRAIN", 0)); STEPS = int(E("STEPS", 20000)); B = int(E("B", 64)); LR = float(E("LR", 2e-4))
 SEED = int(E("SEED", 0)); NW = int(E("NWORK", 28)); NEVP = int(E("NEV_POS", 3000)); CRIT = float(E("CRIT", 5.0)); TAG = E("TAG", f"lexplan_{tlv.ARM}")
+LOSS = E("LOSS", "reg")   # reg: regress E_opp, E_my per candidate; rank: + listwise CE on the planning value over each position's candidates
+TAU = float(E("TAU", 1.5)); RANK_W = float(E("RANK_W", 1.0)); BPOS = int(E("BPOS", 4))   # rank mode: positions per batch (x up to 16 candidates)
 torch.manual_seed(SEED); random.seed(SEED); np.random.seed(SEED)
 data = pickle.load(open(E("DATA", "data/plan_v1.pkl"), "rb"))
 train_pos = [i for i, r in enumerate(data) if r["gi"] % HOLD != 0]; held_pos = [i for i, r in enumerate(data) if r["gi"] % HOLD == 0]
@@ -41,6 +43,18 @@ class DSfix(Dataset):
     def __init__(self, keys): self.keys = keys
     def __len__(self): return len(self.keys)
     def __getitem__(self, k): return item(*self.keys[k])
+class DSpos(Dataset):   # rank mode: one item = all candidates of one training position
+    def __init__(self, seed): self.rng = random.Random(seed)
+    def __len__(self): return 10 ** 9
+    def __getitem__(self, k):
+        while True:
+            i = train_pos[self.rng.randrange(len(train_pos))]
+            its = [x for x in (item(i, j) for j in range(len(data[i]["cands"]))) if x is not None]
+            if len(its) >= 2: return its
+def coll_pos(groups):
+    items = [it for g in groups for it in g]; b = coll(items)
+    b["grp"] = torch.tensor([gi for gi, g in enumerate(groups) for _ in g]); b["sc"] = torch.tensor([float(data[it["pos"]]["cands"][it["cand_j"]][1]) for it in items])
+    return b
 def coll(items):
     b = tlv.collate(items); b["pos"] = torch.tensor([it["pos"] for it in items]); b["cand_j"] = torch.tensor([it["cand_j"] for it in items]); return b   # not "cand": that is the lex arm's retrieval tensor
 
@@ -90,10 +104,18 @@ evaluate("init")
 opt = torch.optim.AdamW(params, lr=LR, weight_decay=0.01)
 sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1, (s + 1) / 500) * 0.5 * (1 + math.cos(math.pi * min(s, STEPS) / STEPS)))
 t0 = time.time(); step = 0; la = None
-for b in DataLoader(DS(SEED), batch_size=B, num_workers=NW, collate_fn=coll, persistent_workers=True, prefetch_factor=4):
+loader = DataLoader(DSpos(SEED), batch_size=BPOS, num_workers=NW, collate_fn=coll_pos, persistent_workers=True, prefetch_factor=4) if LOSS == "rank" else \
+         DataLoader(DS(SEED), batch_size=B, num_workers=NW, collate_fn=coll, persistent_workers=True, prefetch_factor=4)
+for b in loader:
     b = {k: v.to(dev, non_blocking=True) for k, v in b.items()}
     with torch.autocast(dev, dtype=torch.bfloat16, enabled=dev == "cuda"): v, _ = model(b)
     v = v.float(); loss = F.smooth_l1_loss(v[:, 0], b["G"]) + F.smooth_l1_loss(v[:, 1], b["W"])
+    if LOSS == "rank":   # listwise: predicted PV = score - 50 E_opp + 50 E_my vs exact PV, softmax over each position's candidates
+        pv_hat = b["sc"] - 50 * v[:, 0] + 50 * v[:, 1]; pv = b["sc"] - 50 * b["G"] + 50 * b["W"]; lr_ = 0.0
+        for g in b["grp"].unique():
+            m = b["grp"] == g
+            lr_ = lr_ - (torch.softmax(pv[m] / TAU, 0) * torch.log_softmax(pv_hat[m] / TAU, 0)).sum()
+        loss = loss + RANK_W * lr_ / len(b["grp"].unique())
     opt.zero_grad(set_to_none=True); loss.backward(); torch.nn.utils.clip_grad_norm_(params, 1.0); opt.step(); sched.step()
     step += 1; la = loss.item() if la is None else 0.98 * la + 0.02 * loss.item()
     if step % 500 == 0: print(f"step {step} t={time.time()-t0:.0f}s loss={la:.4f}", flush=True)
