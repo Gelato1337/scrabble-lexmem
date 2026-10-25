@@ -87,3 +87,18 @@ for ax, data, lab in ((axes[0], r2, "held-out R² of the score difference (highe
 axes[0].legend(frameon=False, fontsize=9, loc="lower right")
 fig.suptitle("Lexicon memory vs none: value from our own rollouts (19,703 held-out positions; dots = seeds)", x=0.01, ha="left", fontsize=10.5)
 save(fig, "lexmem_sample_efficiency")
+
+# 6. planning benchmark: within-position R² (what decides moves) of the two lexicon-dependent quantities vs training positions
+N = [10000, 40000, 270000]
+wo = {"no lexicon memory": [[.021, -.016], [.059, .139], [.266, .264]], "lexicon memory": [[.224, .178], [.171, .241], [.283, .304]]}
+wm = {"no lexicon memory": [[.364, .326], [.406, .432], [.497, .480]], "lexicon memory": [[.422, .435], [.471, .481], [.510, .532]]}
+fig, axes = plt.subplots(1, 2, figsize=(9, 3.6))
+for ax, data, lab in ((axes[0], wo, "opponent's best reply (E_opp)"), (axes[1], wm, "my best next play (E_my)")):
+    for (name, vals), col, dx in zip(data.items(), (S2, S1), (0.97, 1.03)):
+        ax.plot([n * dx for n in N], [sum(v) / 2 for v in vals], color=col, lw=2, marker="o", ms=5, label=name)
+        for n, v in zip(N, vals): ax.scatter([n * dx] * 2, v, color=col, s=12, alpha=0.5, zorder=3)
+    ax.set_xscale("log"); ax.set_xticks(N); ax.set_xticklabels(["10k", "40k", "270k"]); ax.set_xlabel("training positions")
+    ax.set_ylabel("within-position R²"); ax.set_title(lab, loc="left", fontsize=10)
+axes[0].legend(frameon=False, fontsize=9, loc="lower right")
+fig.suptitle("Planning benchmark: ranking candidates by what they give the opponent and set up for me (3000 held-out positions)", x=0.01, ha="left", fontsize=10)
+save(fig, "lexplan_within_r2")

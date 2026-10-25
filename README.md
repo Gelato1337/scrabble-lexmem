@@ -215,6 +215,16 @@ top 8 of its lane: 0.42–0.44) but that has not turned into better evaluation. 
 
 ![Lexicon memory sample efficiency](docs/figures/lexmem_sample_efficiency.png)
 
+### 8. First positive result: the memory learns planning quantities from far less data (Oct 22–25)
+A benchmark with exact answers: for each candidate move, the opponent's expected best reply and my expected best next play,
+computed by enumeration over the whole dictionary (256 shared tile samples each; no teacher, no value net). With 10k training
+positions the lexicon arm ranks candidates by the opponent's threat with within-position R² 0.20 — the no-memory control 0.00;
+on my own follow-ups 0.43 vs 0.35. The control catches up as data grows (0.27 vs 0.29 at 270k), so the memory acts as a
+**sample-efficiency prior for word-dependent planning**. Move choice improves only slightly so far (critical-position regret 3.89 vs
+4.06 points). Details: [docs/benchmarks.md](docs/benchmarks.md#planning-benchmark-round-2a-2026-10-22--25).
+
+![Planning benchmark](docs/figures/lexplan_within_r2.png)
+
 ## Repository layout
 
 | Folder | Contents |
