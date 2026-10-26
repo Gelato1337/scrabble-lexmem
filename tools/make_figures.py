@@ -89,16 +89,20 @@ fig.suptitle("Lexicon memory vs none: value from our own rollouts (19,703 held-o
 save(fig, "lexmem_sample_efficiency")
 
 # 6. planning benchmark: within-position R² (what decides moves) of the two lexicon-dependent quantities vs training positions
-N = [10000, 40000, 270000]
-wo = {"no lexicon memory": [[.021, -.016], [.059, .139], [.266, .264]], "lexicon memory": [[.224, .178], [.171, .241], [.283, .304]]}
-wm = {"no lexicon memory": [[.364, .326], [.406, .432], [.497, .480]], "lexicon memory": [[.422, .435], [.471, .481], [.510, .532]]}
+N = [1000, 3000, 10000, 40000, 270000]
+wo = {"no lexicon memory": [[-.064, -.043, -.059], [-.033, -.032, -.108], [.021, -.016, .054], [.059, .139], [.266, .264]],
+      "lexicon memory": [[.139, .128, .139], [.181, .134, .163], [.224, .178, .223], [.171, .241], [.283, .304]]}
+creg = {"no lexicon memory": [[5.38, 6.35, 4.76], [5.96, 4.83, 5.08], [4.51, 4.75, 4.76], [4.63, 4.21], [3.95, 4.16]],
+        "lexicon memory": [[5.06, 5.51, 5.06], [4.51, 4.55, 4.67], [4.54, 4.41, 4.25], [4.20, 4.00], [3.99, 3.78]]}
 fig, axes = plt.subplots(1, 2, figsize=(9, 3.6))
-for ax, data, lab in ((axes[0], wo, "opponent's best reply (E_opp)"), (axes[1], wm, "my best next play (E_my)")):
-    for (name, vals), col, dx in zip(data.items(), (S2, S1), (0.97, 1.03)):
-        ax.plot([n * dx for n in N], [sum(v) / 2 for v in vals], color=col, lw=2, marker="o", ms=5, label=name)
-        for n, v in zip(N, vals): ax.scatter([n * dx] * 2, v, color=col, s=12, alpha=0.5, zorder=3)
-    ax.set_xscale("log"); ax.set_xticks(N); ax.set_xticklabels(["10k", "40k", "270k"]); ax.set_xlabel("training positions")
-    ax.set_ylabel("within-position R²"); ax.set_title(lab, loc="left", fontsize=10)
-axes[0].legend(frameon=False, fontsize=9, loc="lower right")
-fig.suptitle("Planning benchmark: ranking candidates by what they give the opponent and set up for me (3000 held-out positions)", x=0.01, ha="left", fontsize=10)
+for ax, data, lab, yl in ((axes[0], wo, "ranking candidates by the opponent's best reply", "within-position R² of E_opp"),
+                          (axes[1], creg, "decisions on planning-critical positions", "regret vs exact answer (points)")):
+    for (name, vals), col, dx in zip(data.items(), (S2, S1), (0.96, 1.04)):
+        ax.plot([n * dx for n in N], [sum(v) / len(v) for v in vals], color=col, lw=2, marker="o", ms=5, label=name)
+        for n, v in zip(N, vals): ax.scatter([n * dx] * len(v), v, color=col, s=12, alpha=0.5, zorder=3)
+    ax.set_xscale("log"); ax.set_xticks(N); ax.set_xticklabels(["1k", "3k", "10k", "40k", "270k"]); ax.set_xlabel("training positions")
+    ax.set_ylabel(yl); ax.set_title(lab, loc="left", fontsize=10)
+axes[0].legend(frameon=False, fontsize=9, loc="upper left")
+axes[1].text(1000, 10.2, "", fontsize=8)
+fig.suptitle("Planning benchmark, lexicon memory vs none (3000 held-out positions; dots = seeds; top-score baseline regret: 10.5)", x=0.01, ha="left", fontsize=10)
 save(fig, "lexplan_within_r2")

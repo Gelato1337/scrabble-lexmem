@@ -135,3 +135,22 @@ of 3000 held-out positions). Model: the stage-2 afterstate net, query encoder fr
 
 Lex > no-lex on every R² in every seed pair; the gap is largest with the least data (within-position E_opp 0.20 vs 0.00 at 10k)
 and narrows to +0.03 at 270k. Decision accuracy / regret move in the same direction but by less than the seed spread.
+
+**Small data (round 2b, 2026-10-26)** — same benchmark, 3 seeds (10k: seeds 0–2), within-position R² and decision regret:
+
+| Training positions | Arm | R² E_opp within | R² E_my within | Regret (all) | Regret (critical) |
+|---|---|---|---|---|---|
+| 1k | no-lex | −0.055 | 0.286 | 2.11 | 5.50 |
+| 1k | **lex** | **0.135** | **0.367** | **2.02** | **5.21** |
+| 3k | no-lex | −0.058 | 0.266 | 2.08 | 5.29 |
+| 3k | **lex** | **0.159** | **0.414** | **1.87** | **4.58** |
+| 10k | no-lex | 0.020 | 0.348 | 1.91 | 4.67 |
+| 10k | **lex** | **0.208** | **0.439** | **1.84** | **4.40** |
+
+Without the memory the net cannot rank candidates by the opponent's threat at all until ~40k positions (within-position R² ≤ 0.02);
+with it, 1k positions already give 0.13. Decisions follow: critical-position regret is 0.3–0.7 points lower with the memory at
+1k–10k positions.
+
+**Listwise ranking loss** (`LOSS=rank`, softmax over each position's candidates on the planning value, τ = 1.5 points, 4 positions
+per batch): worse for both arms at every size (regret 2.0–2.6 vs 1.7–2.1 with regression only; within-position R² near or below 0).
+The regression targets are the better training signal here; the ranking term as configured destabilises them.
