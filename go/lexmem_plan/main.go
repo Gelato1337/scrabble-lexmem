@@ -141,6 +141,6 @@ func main() {
 		close(in)
 	}()
 	bw := bufio.NewWriterSize(os.Stdout, 1<<20); enc := json.NewEncoder(bw)
-	for o := range outc { enc.Encode(o) }
+	for o := range outc { enc.Encode(o); bw.Flush() }   // flush per position: live callers (play_eval PLAN=exact) wait for each answer
 	bw.Flush()
 }
