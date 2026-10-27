@@ -154,3 +154,21 @@ with it, 1k positions already give 0.13. Decisions follow: critical-position reg
 **Listwise ranking loss** (`LOSS=rank`, softmax over each position's candidates on the planning value, τ = 1.5 points, 4 positions
 per batch): worse for both arms at every size (regret 2.0–2.6 vs 1.7–2.1 with regression only; within-position R² near or below 0).
 The regression targets are the better training signal here; the ranking term as configured destabilises them.
+
+**Planning policies in games (round 2c, 2026-10-27)** — move = the top-16 play by score with the best predicted
+score − E_opp + E_my (net) or the exact one (`go/lexmem_plan` live, 256 samples); 4000 games vs HastyBot each, seeds 777000;
+nets = seed-0 checkpoints of the planning benchmark (regression loss, frozen query encoder).
+
+| Player | Win rate | Spread |
+|---|---|---|
+| top score (no planning) | 36.6 % ± 0.8 | −33.8 |
+| net planner, 3k positions, no-lex | 38.9 % | −23.7 |
+| **net planner, 3k positions, lex** | **43.3 %** | **−15.7** |
+| net planner, 10k, no-lex | 42.5 % | −16.6 |
+| net planner, 10k, lex | 43.7 % | −14.8 |
+| net planner, 270k, no-lex | 43.4 % | −12.7 |
+| net planner, 270k, lex | 43.5 % | −12.7 |
+| exact planner | 46.7 % | −4.6 |
+
+The planning value is worth +10 points of win rate over top-score play. Trained on 3k positions, the memory planner recovers 66 %
+of that gap (43.3 %), the control 23 % (38.9 %); the arms converge by 270k positions.

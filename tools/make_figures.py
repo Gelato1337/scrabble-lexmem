@@ -106,3 +106,16 @@ axes[0].legend(frameon=False, fontsize=9, loc="upper left")
 axes[1].text(1000, 10.2, "", fontsize=8)
 fig.suptitle("Planning benchmark, lexicon memory vs none (3000 held-out positions; dots = seeds; top-score baseline regret: 10.5)", x=0.01, ha="left", fontsize=10)
 save(fig, "lexplan_within_r2")
+
+# 7. planning policies in real games vs HastyBot (4000 paired games each, +- standard error)
+N = [3000, 10000, 270000]
+wr = {"no lexicon memory": [38.9, 42.5, 43.4], "lexicon memory": [43.3, 43.7, 43.5]}
+fig, ax = plt.subplots(figsize=(7.5, 3.8))
+for (name, vals), col, dx in zip(wr.items(), (S2, S1), (0.97, 1.03)):
+    ax.errorbar([n * dx for n in N], vals, yerr=[0.8] * 3, color=col, lw=2, marker="o", ms=5, capsize=3, label=name)
+for yv, lab in ((46.7, "exact planner (true planning values)"), (36.6, "top score, no planning")):
+    ax.axhline(yv, color=REF, lw=1.2, ls="--"); ax.text(2300, yv + 0.35, lab, fontsize=8.5, color=INK2)
+ax.set_xscale("log"); ax.set_xticks(N); ax.set_xticklabels(["3k", "10k", "270k"]); ax.set_xlabel("training positions of the planning net")
+ax.set_ylabel("win rate vs HastyBot (%)"); ax.set_ylim(34, 49); ax.legend(frameon=False, fontsize=9, loc="lower right")
+ax.set_title("Planning policy in games: pick the move with the best predicted planning value", loc="left", fontsize=10.5)
+save(fig, "lexplan_games")

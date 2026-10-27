@@ -225,6 +225,15 @@ at 3k positions, 4.40 vs 4.67 at 10k — and the control catches up as data grow
 
 ![Planning benchmark](docs/figures/lexplan_within_r2.png)
 
+### 9. …and it shows up in games (Oct 27)
+A planning policy — among the top 16 plays by score, play the one with the best predicted score − E_opp + E_my — against
+HastyBot, 4000 paired games per player. Planning is worth +10 points of win rate (top score 36.6 %, exact planner 46.7 %).
+Trained on 3k positions, the memory planner reaches **43.3 %**, the control **38.9 %** (+4.4 points, ~5 standard errors); at 10k
+the gap is +1.2 and at 270k they are equal. Same picture as the benchmark: the lexicon memory buys sample efficiency for
+word-dependent planning, and it carries through to winning games.
+
+![Planning policies in games](docs/figures/lexplan_games.png)
+
 ## Repository layout
 
 | Folder | Contents |
