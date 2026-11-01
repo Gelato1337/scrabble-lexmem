@@ -172,3 +172,28 @@ nets = seed-0 checkpoints of the planning benchmark (regression loss, frozen que
 
 The planning value is worth +10 points of win rate over top-score play. Trained on 3k positions, the memory planner recovers 66 %
 of that gap (43.3 %), the control 23 % (38.9 %); the arms converge by 270k positions.
+
+## Dictionary transfer NWL23 → CSW24 (round 2d, 2026-11-01)
+
+The same 300k positions relabelled under CSW24 (280,887 words; 87,984 not in NWL23, incl. 20 two-letter words), same tool, K, S and
+held-out games. Lex arm: word keys rebuilt from the frozen letter encoder over the CSW list; both arms see CSW cross-check sets.
+Dictionary-sensitive = top quarter of held-out positions by label shift vs NWL (≥ 8.6 points; 750 of 3000). Top-score baseline:
+regret 3.52 all / 11.19 critical (NWL: 3.21 / 10.51).
+
+| Condition | Training positions | Arm | R² E_opp within | R² E_my within | Regret all | Regret critical |
+|---|---|---|---|---|---|---|
+| zero-shot (trained on NWL) | 1k | no-lex / lex | −0.044 / **0.142** | 0.286 / **0.360** | 2.22 / 2.19 | 5.71 / **5.55** |
+| zero-shot | 3k | no-lex / lex | −0.045 / **0.162** | 0.270 / **0.414** | 2.21 / **2.02** | 5.47 / **4.96** |
+| zero-shot | 10k | no-lex / lex | 0.021 / **0.197** | 0.352 / **0.439** | 2.08 / **1.98** | 5.08 / **4.70** |
+| zero-shot | 40k | no-lex / lex | 0.095 / **0.212** | 0.425 / **0.476** | 1.96 / **1.85** | 4.80 / **4.36** |
+| zero-shot | 270k | no-lex / lex | 0.239 / **0.281** | 0.489 / **0.523** | 1.84 / **1.69** | 4.43 / **4.00** |
+| zero-shot, dictionary-sensitive | 270k | no-lex / lex | 0.235 / **0.288** | 0.504 / **0.540** | 1.93 / **1.75** | — |
+| trained on CSW | 3k | no-lex / lex | −0.048 / **0.165** | 0.306 / **0.422** | 2.06 / 1.99 | 4.97 / **4.85** |
+| trained on CSW | 10k | no-lex / lex | −0.103 / **0.197** | 0.315 / **0.446** | 2.08 / 1.96 | 4.95 / **4.61** |
+| trained on CSW | 270k | no-lex / lex | 0.198 / **0.271** | 0.510 / **0.536** | 1.74 / 1.68 | 4.05 / **3.81** |
+| few-shot (NWL 270k + CSW fine-tune) | 1k | no-lex / lex | 0.202 / 0.250 | 0.478 / 0.470 | 1.83 / 1.84 | 4.23 / 4.25 |
+| few-shot | 3k | no-lex / lex | 0.196 / 0.264 | 0.473 / 0.481 | 1.82 / 1.82 | 4.27 / 4.19 |
+
+Both arms transfer with little loss; the memory loses less. At 270k NWL positions the critical-regret gap is 0.17 in-domain (NWL) and
+0.43 zero-shot on CSW; the NWL-trained memory planner (4.00) matches a no-memory planner trained on 270k CSW positions (4.05).
+Fine-tuning on 1k–3k CSW positions (lr 2e-4, full model) erases most of the difference and lowers R² vs zero-shot for both arms.

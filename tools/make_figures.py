@@ -119,3 +119,26 @@ ax.set_xscale("log"); ax.set_xticks(N); ax.set_xticklabels(["3k", "10k", "270k"]
 ax.set_ylabel("win rate vs HastyBot (%)"); ax.set_ylim(34, 49); ax.legend(frameon=False, fontsize=9, loc="lower right")
 ax.set_title("Planning policy in games: pick the move with the best predicted planning value", loc="left", fontsize=10.5)
 save(fig, "lexplan_games")
+
+# 8. dictionary transfer: planners trained on NWL23 positions, evaluated on the same positions relabelled under CSW24
+N = [1000, 3000, 10000, 40000, 270000]
+zs_wo = {"no lexicon memory": [[-.056, -.029, -.048], [-.019, -.029, -.086], [.027, -.015, .051], [.053, .136], [.242, .236]],
+         "lexicon memory": [[.152, .137, .138], [.178, .139, .168], [.211, .175, .204], [.186, .238], [.261, .301]]}
+fig, axes = plt.subplots(1, 2, figsize=(9.5, 3.7), gridspec_kw={"width_ratios": [1.25, 1]})
+ax = axes[0]
+for (name, vals), col, dx in zip(zs_wo.items(), (S2, S1), (0.96, 1.04)):
+    ax.plot([n * dx for n in N], [sum(v) / len(v) for v in vals], color=col, lw=2, marker="o", ms=5, label=f"{name}, trained on NWL")
+    for n, v in zip(N, vals): ax.scatter([n * dx] * len(v), v, color=col, s=12, alpha=0.5, zorder=3)
+ax.set_xscale("log"); ax.set_xticks(N); ax.set_xticklabels(["1k", "3k", "10k", "40k", "270k"]); ax.set_xlabel("NWL training positions")
+ax.set_ylabel("within-position R² of E_opp on CSW"); ax.set_title("zero-shot on CSW24: ranking by the opponent's threat", loc="left", fontsize=10)
+ax.legend(frameon=False, fontsize=8.5, loc="upper left")
+ax = axes[1]; conds = ["NWL\n(in-domain)", "CSW\nzero-shot", "CSW\n(trained on CSW)"]
+nol = [4.06, 4.43, 4.05]; lx = [3.89, 4.00, 3.81]; x = list(range(3))
+for vals, col, name, dx in ((nol, S2, "no lexicon memory", -0.08), (lx, S1, "lexicon memory", 0.08)):
+    ax.scatter([i + dx for i in x], vals, color=col, s=55, zorder=3, label=name)
+    for i, v in zip(x, vals): ax.text(i + dx + (0.1 if dx > 0 else -0.1), v, f"{v:.2f}", ha="left" if dx > 0 else "right", va="center", fontsize=8.5, color=INK2)
+for i in x: ax.plot([i - 0.08, i + 0.08], [nol[i], lx[i]], color=GRID, lw=1.5, zorder=2)
+ax.set_xticks(x); ax.set_xticklabels(conds, fontsize=9); ax.set_xlim(-0.6, 2.6); ax.set_ylim(3.6, 4.6); ax.grid(axis="x", visible=False)
+ax.set_ylabel("critical-position regret (points)"); ax.set_title("270k training positions, mean of 2 seeds", loc="left", fontsize=10)
+fig.suptitle("Dictionary transfer NWL23 → CSW24 (same 3000 held-out positions; +88k words)", x=0.01, ha="left", fontsize=10.5)
+save(fig, "lexplan_csw_transfer")

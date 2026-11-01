@@ -7,7 +7,7 @@
 // best = highest-scoring legal play over the whole lexicon (Macondo shadow top-play, score only; bingo bonus included).
 // Planning value PV = score - E_opp + E_my. No policy, no value net, no leave table: only the rules and the dictionary.
 // stdin: {"id":..,"cgp":".."} per line; stdout: {"id":..,"cands":[{"d":[0,r,c,d,L,widx,score,blanks],"eo":..,"em":..,"so":..,"sm":..}]}
-// Env: K S LEXWORDS WORKERS
+// Env: K S LEXWORDS (our word order for widx) LEXICON (KWG name, default NWL23) WORKERS
 package main
 
 import (
@@ -129,7 +129,9 @@ func main() {
 	if err != nil { panic(err) }
 	wordIdx = map[string]int32{}
 	for i, w := range strings.Split(strings.TrimSpace(string(words)), "\n") { wordIdx[w] = int32(i) }
-	gd, err := kwg.GetKWG(cfg.WGLConfig(), "NWL23")
+	lexName := os.Getenv("LEXICON")   // KWG name; must match the "lex" in the input CGPs (default NWL23)
+	if lexName == "" { lexName = "NWL23" }
+	gd, err := kwg.GetKWG(cfg.WGLConfig(), lexName)
 	if err != nil { panic(err) }
 	K, S, W := envI("K", 16), envI("S", 256), envI("WORKERS", 8)
 	in := make(chan In, 1024); outc := make(chan Out, 1024); var wg sync.WaitGroup

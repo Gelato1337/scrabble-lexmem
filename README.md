@@ -234,6 +234,15 @@ word-dependent planning, and it carries through to winning games.
 
 ![Planning policies in games](docs/figures/lexplan_games.png)
 
+### 10. Dictionary transfer: the memory loses less when the words change (Nov 1)
+Planners trained on NWL23 positions, evaluated zero-shot on the same positions relabelled under CSW24 (+88k words). Both arms
+transfer better than expected — dictionary-derived cross-check sets reach the control too — but the memory arm loses less: at 270k
+training positions the critical-position regret gap grows from 0.17 points (NWL) to 0.43 (CSW zero-shot), and the NWL-trained
+memory planner (4.00) matches a no-memory planner trained on 270k CSW positions (4.05). At small data the memory's advantage is
+as large as in NWL. Details: [docs/benchmarks.md](docs/benchmarks.md#dictionary-transfer-nwl23--csw24-round-2d-2026-11-01).
+
+![Dictionary transfer](docs/figures/lexplan_csw_transfer.png)
+
 ## Repository layout
 
 | Folder | Contents |

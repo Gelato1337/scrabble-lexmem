@@ -6,6 +6,8 @@ the whole lexicon, ARM=nolex does not), query encoder frozen in both arms, two r
 Held-out evaluation (positions of games gi % HOLD == 0): R² of E_opp / E_my (pooled, and within position = what decides moves),
 decision accuracy and regret vs the exact PV answer, for all positions and for planning-critical ones (the PV-best move beats the
 top-scoring move by >= CRIT points), against the no-planning baseline (always the top-scoring move); by phase.
+Eval only: EVAL_CKPTS=a.pt,b.pt (weights from another dictionary load fine; word keys are rebuilt for LEXICON); SENS_REF=<labels of the
+same positions under another dictionary> adds a report on the quarter of positions whose labels moved most.
 Usage: ARM=lex MAX_TRAIN=50000 STEPS=20000 SEED=0 TAG=lexplan_lex_50k python train/train_lexplan.py"""
 import os, sys, time, math, pickle, random, importlib.util, numpy as np, torch, torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
@@ -70,9 +72,20 @@ params = [p for p in model.parameters() if p.requires_grad]; print(f"trainable p
 ev_keys = [(i, j) for i in held_pos for j in range(len(data[i]["cands"]))]
 EV = [x for ch in DataLoader(DSfix(ev_keys), batch_size=256, num_workers=NW, collate_fn=lambda b: b) for x in ch if x is not None]
 print(f"eval candidates {len(EV)}", flush=True)
+SENS = set()   # dictionary-sensitive held-out positions: top quarter by label shift vs a reference labelling (same positions, other dictionary)
+if E("SENS_REF"):
+    ref = {(r["gi"], r["turn"]): r for r in pickle.load(open(E("SENS_REF"), "rb"))}; shift = {}
+    for i in held_pos:
+        r = data[i]; q = ref.get((r["gi"], r["turn"]))
+        if q is None: continue
+        mo = lambda x: np.mean([c[2] for c in x["cands"]]); mm = lambda x: np.mean([c[3] for c in x["cands"]])
+        shift[i] = abs(mo(r) - mo(q)) + abs(mm(r) - mm(q))
+    if shift:
+        thr = np.quantile(list(shift.values()), 0.75); SENS = {i for i, v in shift.items() if v >= thr}
+        print(f"dictionary-sensitive positions: {len(SENS)} of {len(shift)} matched (label shift >= {thr:.1f} points)", flush=True)
 
 @torch.no_grad()
-def evaluate(tag):
+def evaluate(tag, subset=None):
     model.eval(); pred = {}
     for k in range(0, len(EV), 128):
         b = {kk: v.to(dev) for kk, v in coll(EV[k:k + 128]).items()}
@@ -82,6 +95,7 @@ def evaluate(tag):
     model.train()
     yo, po, ym, pm, wo, wm = [], [], [], [], [], []; rows = []
     for i in held_pos:
+        if subset is not None and i not in subset: continue
         cs = data[i]["cands"]; js = [j for j in range(len(cs)) if (i, j) in pred]
         if len(js) < 2: continue
         to = np.array([cs[j][2] for j in js]); tm = np.array([cs[j][3] for j in js]); sc = np.array([cs[j][1] for j in js], dtype=float)
@@ -100,6 +114,20 @@ def evaluate(tag):
         k = (R[:, 5] >= lo) & (R[:, 5] <= hi)
         if k.sum(): line += f" | {nm}: acc {R[k,0].mean():.3f} regret {R[k,1].mean():.2f}"
     print(line, flush=True)
+def load_ckpt(path):
+    """weights from another dictionary: skip dictionary-sized buffers (word keys, letter tables) and rebuild the keys here."""
+    sd = torch.load(path, map_location=dev); own = model.state_dict()
+    skipped = [k for k, v in sd.items() if k not in own or own[k].shape != v.shape]
+    model.load_state_dict({k: v for k, v in sd.items() if k in own and own[k].shape == v.shape}, strict=False)
+    if tlv.LEXARM: model.refresh_keys()
+    return skipped
+if E("EVAL_CKPTS"):   # evaluation only (e.g. zero-shot transfer to another dictionary)
+    for path in E("EVAL_CKPTS").split(","):
+        sk = load_ckpt(path); print(f"=== {path} (skipped buffers: {sk})", flush=True)
+        evaluate(os.path.basename(path)); 
+        if SENS: evaluate(os.path.basename(path) + " | dictionary-sensitive", SENS)
+    sys.exit(0)
+if E("INIT_CKPT"): print(f"init from {E('INIT_CKPT')} (skipped buffers: {load_ckpt(E('INIT_CKPT'))})", flush=True)   # few-shot transfer
 evaluate("init")
 opt = torch.optim.AdamW(params, lr=LR, weight_decay=0.01)
 sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1, (s + 1) / 500) * 0.5 * (1 + math.cos(math.pi * min(s, STEPS) / STEPS)))
@@ -119,6 +147,8 @@ for b in loader:
     opt.zero_grad(set_to_none=True); loss.backward(); torch.nn.utils.clip_grad_norm_(params, 1.0); opt.step(); sched.step()
     step += 1; la = loss.item() if la is None else 0.98 * la + 0.02 * loss.item()
     if step % 500 == 0: print(f"step {step} t={time.time()-t0:.0f}s loss={la:.4f}", flush=True)
-    if step % int(E("EVAL_EVERY", 4000)) == 0 or step == STEPS: evaluate(f"step {step}"); torch.save(model.state_dict(), f"data/{TAG}.pt")
+    if step % int(E("EVAL_EVERY", 4000)) == 0 or step == STEPS:
+        evaluate(f"step {step}"); torch.save(model.state_dict(), f"data/{TAG}.pt")
+        if SENS and step == STEPS: evaluate(f"step {step} | dictionary-sensitive", SENS)
     if step >= STEPS: break
 print(f"=== saved data/{TAG}.pt", flush=True)
