@@ -234,14 +234,29 @@ word-dependent planning, and it carries through to winning games.
 
 ![Planning policies in games](docs/figures/lexplan_games.png)
 
-### 10. Dictionary transfer: the memory loses less when the words change (Nov 1)
+### 10. Dictionary transfer: the memory loses less on the benchmark, not in games (Nov 1)
 Planners trained on NWL23 positions, evaluated zero-shot on the same positions relabelled under CSW24 (+88k words). Both arms
-transfer better than expected — dictionary-derived cross-check sets reach the control too — but the memory arm loses less: at 270k
-training positions the critical-position regret gap grows from 0.17 points (NWL) to 0.43 (CSW zero-shot), and the NWL-trained
-memory planner (4.00) matches a no-memory planner trained on 270k CSW positions (4.05). At small data the memory's advantage is
-as large as in NWL. Details: [docs/benchmarks.md](docs/benchmarks.md#dictionary-transfer-nwl23--csw24-round-2d-2026-11-01).
+transfer with little loss, and the memory arm loses less: at 270k training positions the critical-position regret gap grows from
+0.17 points (NWL) to 0.43 (CSW zero-shot), and the NWL-trained memory planner (4.00) matches a no-memory planner trained on 270k CSW
+positions (4.05). At small data the memory's advantage is as large as in NWL. Details:
+[docs/benchmarks.md](docs/benchmarks.md#dictionary-transfer-nwl23--csw24-round-2d-2026-11-01).
 
 ![Dictionary transfer](docs/figures/lexplan_csw_transfer.png)
+
+In games the transfer advantage does not appear. The same nets against HastyBot playing CSW24 (4000 games each; right panel of
+the games figure in finding 9): planning is worth +13 points (top score 35.6 %, exact planner 48.4 %), but the memory planner leads
+by only +1.4 at 3k and +1.6 at 10k (NWL: +4.4, +1.2), and at 270k the control wins more, 45.7 % vs 43.7 %. One checkpoint per arm, so
+gaps of 1–2 points are not resolved.
+
+### 11. Without cross-check sets the control does not collapse (Nov 1)
+Isolation test: both arms retrained with the cross-check letters removed from their lane tokens, the control's only
+dictionary-derived input. The prediction was that the control would collapse, especially on CSW. It did not: within-position R²
+moves by at most 0.03 for either arm, in-domain and on CSW, and the memory's lead on ranking by the opponent's threat is unchanged
+(on CSW: 0.17 vs −0.03 at 3k, 0.29 vs 0.23 at 270k). The control learns the word regularities it needs from the labelled positions
+themselves, given enough of them; so far the memory buys **sample efficiency, not a higher ceiling**. Caveat: both arms share a
+frozen query encoder pretrained on NWL future-word prediction, so the control is not fully dictionary-free.
+
+![No cross-check sets](docs/figures/lexplan_no_xchk.png)
 
 ## Repository layout
 
@@ -313,8 +328,26 @@ CKPT=<ckpt> SOCK=/tmp/lexmem.sock python selfplay/server_infer.py &
 BRANCH_ONLY=1 python prep/go2pkl.py games.jsonl spb_0 && TRAIN=spb_0 INIT=<ckpt> TAG=branch_test python train/train_branch.py
 ```
 
+**5. Planning benchmark and the lexicon-memory tests** (findings 8–11)
+```bash
+# positions from Go self-play -> CGP lines -> exact labels by enumeration (go/lexmem_plan; on LUMI as an array: lumi/plan_label.sh)
+python prep/plan_positions.py sample spf_0 300000 data/plan_in.jsonl
+(cd $MACONDO && LEXICON=NWL23 LEXWORDS=$PWD/../scrabble-lexmem/data/lexwords.txt K=16 S=256 ./bin/lexmem_plan < plan_in.jsonl > plan_out.jsonl)
+python prep/plan_positions.py merge spf_0 data/plan_in.jsonl data/plan_out.jsonl v1          # -> data/plan_v1.pkl
+# lex vs no-lex at a fixed training size (query encoder frozen in both arms); NO_XCHK=1 removes the cross-check letters
+ARM=lex SEED=0 MAX_TRAIN=3000 STEPS=4000 B=64 NEV_POS=3000 HOLDOUT_MOD=10 TAG=lexplan_lex_3000_s0 python train/train_lexplan.py
+# eval only, another dictionary (word keys rebuilt from the frozen letter encoder), plus the dictionary-sensitive quarter
+ARM=lex DATA=data/plan_csw.pkl LEXICON=data/CSW24.txt SENS_REF=data/plan_v1.pkl EVAL_CKPTS=data/lexplan_lex_3000_s0.pt NEV_POS=3000 HOLDOUT_MOD=10 python train/train_lexplan.py
+# planning policies in games: PLAN=net (PLAN_ARM, PLAN_CKPT) | exact | topscore
+PLAN=net PLAN_ARM=lex PLAN_CKPT=data/lexplan_lex_3000_s0.pt NPROC=60 python eval/play_eval.py 4000 777000
+# ... under CSW24 (HastyBot, exact planner and our engine all switch dictionary)
+LEXICON=data/CSW24.txt MACONDO_LEX=CSW24 PLAN_WORDS=data/lexwords_csw.txt PLAN=exact NPROC=60 python eval/play_eval.py 4000 777000
+```
+
 ## Pitfalls worth knowing
-- Win-rate differences of 1–2 points need thousands of games; compare nets on the same seeds (`play_eval.py ... 777000`).
+- Win-rate differences of 1–2 points need thousands of games; compare nets on the same seeds (`play_eval.py ... 777000`). Since
+  2026-11-01 `play_eval.py` stores each game's spread at its game index, so two runs can be compared game by game; earlier
+  pickles are in completion order, and planner runs before then overwrote one another's file.
 - Macondo's endgame table takes 20 % of the node's RAM per process unless `GOMEMLIMIT` is set (the harness sets 2 GiB); its endgame
   solver can return an empty sequence on time-out (our wrapper falls back to the static move).
 - Scores of blank plays: always use `legal_moves` / `designate` (exact); Python self-play data from before 2026-10-13 used inflated

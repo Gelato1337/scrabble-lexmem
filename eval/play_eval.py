@@ -11,6 +11,11 @@ ENDGAME = int(os.environ.get("ENDGAME", 0)); EG_SECS = float(os.environ.get("EG_
 OURS = os.environ.get("OURS", ""); OURS_SECS = float(os.environ.get("OURS_SECS", 10))   # a Macondo bot code plays our side instead of the net
 PLAN = os.environ.get("PLAN", "")   # planning policies: "net" (PLAN_CKPT + PLAN_ARM), "exact" (go/lexmem_plan live), "topscore"
 PLAN_K = int(os.environ.get("PLAN_K", 16))
+MLEX = os.environ.get("MACONDO_LEX", "NWL23")   # Macondo's dictionary (HastyBot, bots, exact planner); our engine uses LEXICON (word file)
+def load_shapes(model, path):
+    """load weights trained under another dictionary: skip dictionary-sized buffers (word keys, letter tables)."""
+    sd = torch.load(path, map_location="cpu"); own = model.state_dict()
+    model.load_state_dict({k: v for k, v in sd.items() if k in own and own[k].shape == v.shape}, strict=False)
 G = {}
 def bot_cpus():
     """2 cores per worker, by pool index, out of the cores this job may use."""
@@ -21,22 +26,23 @@ def init():
     from lexmem.policy import PolicyNet, MoveDataset
     from lexmem.harness import HastyBot, MacondoBot
     lex = Lexicon(LEXICON); model = PolicyNet(lex, use_lex=USE_LEX)
-    sd = torch.load(CKPT, map_location="cpu"); model.load_state_dict(sd, strict=False); model.eval()
+    load_shapes(model, CKPT); model.eval()
     if USE_LEX: model.refresh_keys()
-    G.update(lex=lex, model=model, helper=MoveDataset(lex, [], use_lex=USE_LEX, exch=os.environ.get("EXCH", "0") == "1"), hasty=HastyBot() if OPP == "hasty" else MacondoBot(OPP, OPP_SECS, cpus=bot_cpus()))
+    G.update(lex=lex, model=model, helper=MoveDataset(lex, [], use_lex=USE_LEX, exch=os.environ.get("EXCH", "0") == "1"), hasty=HastyBot(lexicon=MLEX) if OPP == "hasty" else MacondoBot(OPP, OPP_SECS, lexicon=MLEX, cpus=bot_cpus()))
     if OURS: G["ours"] = MacondoBot(OURS, OURS_SECS, cpus=bot_cpus())
     if PLAN == "net":   # the planning benchmark's afterstate net (train/train_lexplan.py): predicts E_opp, E_my per candidate
         import importlib.util
         os.environ["ARM"] = os.environ.get("PLAN_ARM", "lex"); os.environ["FREEZE_Q"] = "1"
         spec = importlib.util.spec_from_file_location("tlv", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "train", "train_lexvalue.py"))
         tlv = importlib.util.module_from_spec(spec); spec.loader.exec_module(tlv); torch.set_num_threads(1)
-        pm = tlv.LexValue(); pm.load_state_dict(torch.load(os.environ["PLAN_CKPT"], map_location="cpu"), strict=False); pm.eval()
+        pm = tlv.LexValue(); load_shapes(pm, os.environ["PLAN_CKPT"]); pm.eval()
+        if tlv.LEXARM: pm.refresh_keys()   # word keys for this game's dictionary, from the frozen letter encoder
         G.update(tlv=tlv, pm=pm)
     if PLAN == "exact":   # exact planning values live: one lexmem_plan process per worker
         import subprocess
         G["planp"] = subprocess.Popen([os.path.join(os.environ["MACONDO"], "bin/lexmem_plan")], cwd=os.environ["MACONDO"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                      stderr=subprocess.DEVNULL, text=True, bufsize=1, env=dict(os.environ, K=str(PLAN_K), S=os.environ.get("PLAN_S", "256"), WORKERS="1",
-                                      LEXWORDS=os.path.abspath("data/lexwords.txt"), GOMAXPROCS="1"), preexec_fn=(lambda c=bot_cpus(): os.sched_setaffinity(0, c)))
+                                      stderr=subprocess.DEVNULL, text=True, bufsize=1, env=dict(os.environ, K=str(PLAN_K), S=os.environ.get("PLAN_S", "256"), WORKERS="1", LEXICON=MLEX,
+                                      LEXWORDS=os.path.abspath(os.environ.get("PLAN_WORDS", "data/lexwords.txt")), GOMAXPROCS="1"), preexec_fn=(lambda c=bot_cpus(): os.sched_setaffinity(0, c)))
     if ENDGAME: G["eg"] = MacondoBot("SIMMING_BOT", EG_SECS, cpus=bot_cpus())
     if SIM or VSEARCH:
         from lexmem.macondo_gen import MacondoGen; G["mg"] = MacondoGen()
@@ -65,7 +71,7 @@ def one(g):
         if PLAN == "exact":
             from lexmem.harness import HastyBot
             import types
-            cgp = HastyBot.cgp(types.SimpleNamespace(lexicon="NWL23"), board, blanks, rack, G.get("sc", (0, 0)), 0)
+            cgp = HastyBot.cgp(types.SimpleNamespace(lexicon=MLEX), board, blanks, rack, G.get("sc", (0, 0)), 0)
             G["planp"].stdin.write(_json.dumps({"id": 0, "cgp": cgp}) + "\n"); G["planp"].stdin.flush()
             o = _json.loads(G["planp"].stdout.readline()); cs = o.get("cands") or []
             if not cs: return cands[0]
@@ -126,14 +132,14 @@ def one(g):
             return plan_pol(G["lex"], board, blanks, cross_checks(G["lex"], board, blanks), rack, FULL_BAG - on - rack, random.Random(0))
     player = G["ours"] if OURS else (Hybrid() if ENDGAME else (PlanPlayer() if PLAN else pol))
     spread, scores, log = play_vs_hasty(lex, player, G["hasty"], SEED0 + g, we_first=(g % 2 == 0))
-    return spread
+    return g, spread
 if __name__ == "__main__":
     t = time.time()
     with mp.Pool(NPROC, initializer=init) as pool:
-        res = []
-        for i, r in enumerate(pool.imap_unordered(one, range(NG))):
-            res.append(r)
-            if (i + 1) % 100 == 0: a = np.array(res); print(f"{i+1} games: win {np.mean(a>0):.3f} spread {a.mean():+.1f} ± {a.std()/np.sqrt(len(a)):.1f}  {time.time()-t:.0f}s", flush=True)
-    a = np.array(res); se = np.sqrt(np.mean(a > 0) * (1 - np.mean(a > 0)) / len(a))
+        res = {}
+        for i, (g, r) in enumerate(pool.imap_unordered(one, range(NG))):
+            res[g] = r
+            if (i + 1) % 100 == 0: a = np.array(list(res.values())); print(f"{i+1} games: win {np.mean(a>0):.3f} spread {a.mean():+.1f} ± {a.std()/np.sqrt(len(a)):.1f}  {time.time()-t:.0f}s", flush=True)
+    a = np.array([res[g] for g in range(NG)]); se = np.sqrt(np.mean(a > 0) * (1 - np.mean(a > 0)) / len(a))
     print(f"FINAL plan={PLAN}:{os.path.basename(os.environ.get('PLAN_CKPT', ''))} endgame={ENDGAME} {OURS + f'({OURS_SECS:g}s)' if OURS else os.path.basename(CKPT)} search={SEARCH} sim={SIM} vsearch={VSEARCH} hval={HVAL} vckpt={os.path.basename(VCKPT)} cand={CAND} rollout={ROLLOUT} K={K} S={S} S2={S2} mix={MIX} vs {OPP}{'' if OPP == 'hasty' else f'({OPP_SECS:g}s)'}: {NG} games, win rate {np.mean(a>0):.3f} ± {se:.3f}, ties {np.mean(a==0):.3f}, spread {a.mean():+.1f} ± {a.std()/np.sqrt(len(a)):.1f}, first-seat win {np.mean(a[0::2]>0):.3f} second-seat win {np.mean(a[1::2]>0):.3f}")
-    pickle.dump(a, open(f"data/eval_{('bot_' + OURS) if OURS else os.path.basename(CKPT)[:-3]}{'_search' if SEARCH else ''}{'_sim' if SIM else ''}{'_vsearch' if VSEARCH else ''}{'_hval' if HVAL else ''}{TAGE}{'' if OPP == 'hasty' else '_vs_' + OPP}_{NG}.pkl", "wb"))
+    pickle.dump(a, open(f"data/eval_{('bot_' + OURS) if OURS else os.path.basename(CKPT)[:-3]}{'_search' if SEARCH else ''}{'_sim' if SIM else ''}{'_vsearch' if VSEARCH else ''}{'_hval' if HVAL else ''}{TAGE}{'_' + PLAN + '-' + os.path.basename(os.environ.get('PLAN_CKPT', ''))[:-3] if PLAN else ''}{'_' + MLEX if MLEX != 'NWL23' else ''}{'' if OPP == 'hasty' else '_vs_' + OPP}_{NG}.pkl", "wb"))   # a[g] = spread of game g (seed SEED0 + g): runs pair game by game

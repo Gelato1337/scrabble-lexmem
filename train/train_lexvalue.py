@@ -18,6 +18,7 @@ E = os.environ.get; dev = "cuda" if torch.cuda.is_available() else "cpu"
 ARM = E("ARM", "lex"); LEXARM = ARM == "lex"; NL = int(E("NLANES", 12)); CAP = int(E("CAP", 256)); STEPS = int(E("STEPS", 40000))
 B = int(E("B", 64)); LR = float(E("LR", 2e-4)); HOLD = int(E("HOLDOUT_MOD", 20)); NW = int(E("NWORK", 24)); TAG = E("TAG", f"lexvalue_{ARM}")
 AUXW = float(E("AUX_W", 0.5)); NEV = int(E("NEV", 4000)); NEV_SUB = int(E("NEV_SUB", 4000)); D = 256
+NO_XCHK = E("NO_XCHK", "0") == "1"   # isolation test: lane tokens carry no cross-check letters (the only dictionary-derived input), both arms
 TARGET = E("TARGET", "outcome")   # outcome: the game's own result; ro: mean of K rollouts from the afterstate (rec["ro"])
 FREEZE_Q = E("FREEZE_Q", "0") == "1"; MAX_TRAIN = int(E("MAX_TRAIN", 0))   # frozen query encoder (both arms); fixed training subsample
 SEED = int(E("SEED", 0)); torch.manual_seed(SEED); random.seed(SEED); np.random.seed(SEED)
@@ -64,6 +65,7 @@ def build(rec, final_scores, nxt):
     U = []
     for (r, c, d, L) in ln:
         info = lane_info(b2, bl2, cc, r, c, d, L); lt = lane_tokens(info, L)
+        if NO_XCHK: lt[:L, 27:53] = 1.0   # "any letter fits": no dictionary knowledge outside the memory
         for side in (0, 1):
             u = dict(lane=lt, L=L, side=side, glob=np.array([len_bag(rec) / 100, sp_after / 100 * (1 if side == 0 else -1), L / 15, 0.0, float(side)], dtype=np.float32))
             if LEXARM:

@@ -194,6 +194,53 @@ regret 3.52 all / 11.19 critical (NWL: 3.21 / 10.51).
 | few-shot (NWL 270k + CSW fine-tune) | 1k | no-lex / lex | 0.202 / 0.250 | 0.478 / 0.470 | 1.83 / 1.84 | 4.23 / 4.25 |
 | few-shot | 3k | no-lex / lex | 0.196 / 0.264 | 0.473 / 0.481 | 1.82 / 1.82 | 4.27 / 4.19 |
 
-Both arms transfer with little loss; the memory loses less. At 270k NWL positions the critical-regret gap is 0.17 in-domain (NWL) and
+Both arms transfer with little loss; the memory loses less. (Not because the control reads CSW cross-check sets: removing them
+changes neither arm, see the isolation test below.) At 270k NWL positions the critical-regret gap is 0.17 in-domain (NWL) and
 0.43 zero-shot on CSW; the NWL-trained memory planner (4.00) matches a no-memory planner trained on 270k CSW positions (4.05).
 Fine-tuning on 1k–3k CSW positions (lr 2e-4, full model) erases most of the difference and lowers R² vs zero-shot for both arms.
+
+**Planning policies in CSW games** — the round-2c players, unchanged (seed-0 nets trained on NWL, zero-shot), against HastyBot
+playing CSW24; our engine and the lex arm's word keys use the CSW list, the exact planner enumerates CSW24. 4000 games each,
+seeds 777000 (± 0.8).
+
+| Player | Win rate CSW24 | Spread | (NWL23, round 2c) |
+|---|---|---|---|
+| top score (no planning) | 35.6 % | −36.7 | 36.6 % |
+| net planner, 3k, no-lex / lex | 40.0 % / 41.4 % | −24.2 / −20.2 | 38.9 % / 43.3 % |
+| net planner, 10k, no-lex / lex | 41.6 % / 43.2 % | −19.1 / −16.7 | 42.5 % / 43.7 % |
+| net planner, 270k, no-lex / lex | **45.7 %** / 43.7 % | −11.8 / −15.8 | 43.4 % / 43.5 % |
+| exact planner | 48.4 % | −4.1 | 46.7 % |
+
+Planning is worth more under CSW (+12.8 points vs +10.1). The benchmark's transfer advantage of the memory does not show up in
+games: its lead is +1.4 at 3k and +1.6 at 10k, and at 270k the control wins more (45.7 vs 43.7), although on the CSW benchmark the
+same seed-0 nets rank the other way (critical regret 4.38 no-lex vs 4.12 lex). One checkpoint per arm; per-game results of these
+runs were not kept (all planner runs wrote the same file, unordered), so the differences cannot be paired. `play_eval.py` now
+stores the spread by game index under a file named after the planner and dictionary.
+
+**Isolation: no cross-check sets (2026-11-01)** — `NO_XCHK=1`: the lane tokens' 26 allowed-letter features are set to "any letter
+fits" in training and evaluation, both arms; the board CNN has no cross-check input, so the control's only remaining
+dictionary-trained part is the frozen query encoder (pretrained on NWL future-word prediction, shared by both arms). Trained on
+NWL as in round 2a/2b, seeds 0–1; compared with the cross-check runs of the same seeds (means of 2 seeds).
+
+| Eval | Training positions | Arm | R² E_opp within: with / without | Regret all: with / without | Regret critical: with / without |
+|---|---|---|---|---|---|
+| NWL | 3k | no-lex | −0.033 / −0.042 | 2.08 / 1.89 | 5.40 / 4.57 |
+| NWL | 3k | lex | 0.158 / 0.175 | 1.87 / 1.84 | 4.53 / 4.48 |
+| NWL | 10k | no-lex | 0.003 / −0.024 | 1.87 / 1.91 | 4.63 / 4.76 |
+| NWL | 10k | lex | 0.201 / 0.184 | 1.87 / 1.82 | 4.48 / 4.45 |
+| NWL | 270k | no-lex | 0.265 / 0.252 | 1.71 / 1.68 | 4.06 / 4.06 |
+| NWL | 270k | lex | 0.293 / 0.285 | 1.66 / 1.72 | 3.89 / 4.15 |
+| CSW zero-shot | 3k | no-lex | −0.024 / −0.029 | 2.25 / 2.07 | 5.68 / 5.03 |
+| CSW zero-shot | 3k | lex | 0.159 / 0.173 | 2.02 / 2.01 | 4.95 / 4.86 |
+| CSW zero-shot | 10k | no-lex | 0.006 / −0.014 | 2.07 / 2.05 | 5.05 / 5.00 |
+| CSW zero-shot | 10k | lex | 0.193 / 0.181 | 2.02 / 1.94 | 4.78 / 4.66 |
+| CSW zero-shot | 270k | no-lex | 0.239 / 0.229 | 1.84 / 1.83 | 4.43 / 4.49 |
+| CSW zero-shot | 270k | lex | 0.281 / 0.288 | 1.69 / 1.79 | 4.00 / 4.22 |
+| CSW, dictionary-sensitive | 270k | no-lex | 0.234 / 0.236 | 1.93 / 1.87 | 5.06 / 4.68 |
+| CSW, dictionary-sensitive | 270k | lex | 0.287 / 0.310 | 1.75 / 1.81 | 4.38 / 4.44 |
+
+Prediction was that the control collapses without cross-checks, most on CSW. It does not: within-position R² moves by ≤ 0.03 in
+every cell of both arms, and the memory's lead on ranking is unchanged. Regret moves by up to 0.8 points, in both directions, which
+is the seed spread at 3k (e.g. no-lex 3k seed 0 vs 1 on CSW: 6.28 vs 5.08 critical with cross-checks). So the round-2d explanation
+(the control transfers through CSW cross-check sets) is wrong: the control learns what it needs from the labelled positions
+(and possibly the shared NWL-pretrained query encoder), given enough of them.

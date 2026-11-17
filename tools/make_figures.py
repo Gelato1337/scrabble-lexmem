@@ -107,17 +107,20 @@ axes[1].text(1000, 10.2, "", fontsize=8)
 fig.suptitle("Planning benchmark, lexicon memory vs none (3000 held-out positions; dots = seeds; top-score baseline regret: 10.5)", x=0.01, ha="left", fontsize=10)
 save(fig, "lexplan_within_r2")
 
-# 7. planning policies in real games vs HastyBot (4000 paired games each, +- standard error)
+# 7. planning policies in real games vs HastyBot (4000 games each, +- standard error); same seed-0 nets in both dictionaries
 N = [3000, 10000, 270000]
-wr = {"no lexicon memory": [38.9, 42.5, 43.4], "lexicon memory": [43.3, 43.7, 43.5]}
-fig, ax = plt.subplots(figsize=(7.5, 3.8))
-for (name, vals), col, dx in zip(wr.items(), (S2, S1), (0.97, 1.03)):
-    ax.errorbar([n * dx for n in N], vals, yerr=[0.8] * 3, color=col, lw=2, marker="o", ms=5, capsize=3, label=name)
-for yv, lab in ((46.7, "exact planner (true planning values)"), (36.6, "top score, no planning")):
-    ax.axhline(yv, color=REF, lw=1.2, ls="--"); ax.text(2300, yv + 0.35, lab, fontsize=8.5, color=INK2)
-ax.set_xscale("log"); ax.set_xticks(N); ax.set_xticklabels(["3k", "10k", "270k"]); ax.set_xlabel("training positions of the planning net")
-ax.set_ylabel("win rate vs HastyBot (%)"); ax.set_ylim(34, 49); ax.legend(frameon=False, fontsize=9, loc="lower right")
-ax.set_title("Planning policy in games: pick the move with the best predicted planning value", loc="left", fontsize=10.5)
+games = (("NWL23 (in-domain)", {"no lexicon memory": [38.9, 42.5, 43.4], "lexicon memory": [43.3, 43.7, 43.5]}, 46.7, 36.6),
+         ("CSW24, zero-shot (HastyBot plays CSW24)", {"no lexicon memory": [40.0, 41.6, 45.7], "lexicon memory": [41.4, 43.2, 43.7]}, 48.4, 35.6))
+fig, axes = plt.subplots(1, 2, figsize=(10, 3.8), sharey=True)
+for ax, (title, wr, ex, ts) in zip(axes, games):
+    for (name, vals), col, dx in zip(wr.items(), (S2, S1), (0.97, 1.03)):
+        ax.errorbar([n * dx for n in N], vals, yerr=[0.8] * 3, color=col, lw=2, marker="o", ms=5, capsize=3, label=name)
+    for yv, lab in ((ex, f"exact planner {ex}"), (ts, f"top score, no planning {ts}")):
+        ax.axhline(yv, color=REF, lw=1.2, ls="--"); ax.text(2300, yv + 0.35, lab, fontsize=8.5, color=INK2)
+    ax.set_xscale("log"); ax.set_xticks(N); ax.set_xticklabels(["3k", "10k", "270k"]); ax.set_xlabel("NWL training positions of the planning net")
+    ax.set_ylim(34, 50); ax.set_title(title, loc="left", fontsize=10)
+axes[0].set_ylabel("win rate vs HastyBot (%)"); axes[0].legend(frameon=False, fontsize=9, loc="lower right")
+fig.suptitle("Planning policy in games: pick the move with the best predicted planning value (4000 games per point)", x=0.01, ha="left", fontsize=10.5)
 save(fig, "lexplan_games")
 
 # 8. dictionary transfer: planners trained on NWL23 positions, evaluated on the same positions relabelled under CSW24
@@ -142,3 +145,18 @@ ax.set_xticks(x); ax.set_xticklabels(conds, fontsize=9); ax.set_xlim(-0.6, 2.6);
 ax.set_ylabel("critical-position regret (points)"); ax.set_title("270k training positions, mean of 2 seeds", loc="left", fontsize=10)
 fig.suptitle("Dictionary transfer NWL23 → CSW24 (same 3000 held-out positions; +88k words)", x=0.01, ha="left", fontsize=10.5)
 save(fig, "lexplan_csw_transfer")
+
+# 9. isolation: lane tokens without cross-check letters (the control's only dictionary-derived input), both arms, zero-shot on CSW
+N = [3000, 10000, 270000]
+iso = {("no lexicon memory", True): [[-.019, -.029], [.027, -.015], [.242, .236]], ("no lexicon memory", False): [[-.055, -.003], [.006, -.034], [.216, .242]],
+       ("lexicon memory", True): [[.178, .139], [.211, .175], [.261, .301]], ("lexicon memory", False): [[.185, .161], [.198, .164], [.272, .304]]}
+fig, ax = plt.subplots(figsize=(7.5, 3.8))
+for (name, xchk), vals in iso.items():
+    col = S1 if name == "lexicon memory" else S2; dx = (1.04 if name == "lexicon memory" else 0.96) * (1.0 if xchk else 1.02)
+    ax.plot([n * dx for n in N], [sum(v) / len(v) for v in vals], color=col, lw=2, ls="-" if xchk else "--", marker="o" if xchk else "s",
+            ms=5, mfc=col if xchk else SURFACE, label=f"{name}, {'with' if xchk else 'without'} cross-checks")
+    for n, v in zip(N, vals): ax.scatter([n * dx] * len(v), v, color=col, s=12, alpha=0.5, zorder=3)
+ax.set_xscale("log"); ax.set_xticks(N); ax.set_xticklabels(["3k", "10k", "270k"]); ax.set_xlabel("NWL training positions")
+ax.set_ylabel("within-position R² of E_opp on CSW"); ax.legend(frameon=False, fontsize=8.5, loc="upper left")
+ax.set_title("Removing cross-check sets changes neither arm (zero-shot on CSW24; dots = seeds 0, 1)", loc="left", fontsize=10)
+save(fig, "lexplan_no_xchk")
