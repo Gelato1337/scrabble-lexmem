@@ -107,20 +107,22 @@ axes[1].text(1000, 10.2, "", fontsize=8)
 fig.suptitle("Planning benchmark, lexicon memory vs none (3000 held-out positions; dots = seeds; top-score baseline regret: 10.5)", x=0.01, ha="left", fontsize=10)
 save(fig, "lexplan_within_r2")
 
-# 7. planning policies in real games vs HastyBot (4000 games each, +- standard error); same seed-0 nets in both dictionaries
+# 7. planning policies in real games vs HastyBot (4000 games per run, +- 0.8 each; seeds 0 and 1 of each net; exact planner with the
+# fixed labeller of 2026-11-17); same nets in both dictionaries
 N = [3000, 10000, 270000]
-games = (("NWL23 (in-domain)", {"no lexicon memory": [38.9, 42.5, 43.4], "lexicon memory": [43.3, 43.7, 43.5]}, 46.7, 36.6),
-         ("CSW24, zero-shot (HastyBot plays CSW24)", {"no lexicon memory": [40.0, 41.6, 45.7], "lexicon memory": [41.4, 43.2, 43.7]}, 48.4, 35.6))
+games = (("NWL23 (in-domain)", {"no lexicon memory": [[38.9, 43.1], [42.5, 41.0], [43.4, 44.0]], "lexicon memory": [[43.4, 43.0], [43.7, 43.3], [43.5, 43.2]]}, 48.2, 36.6),
+         ("CSW24, zero-shot (HastyBot plays CSW24)", {"no lexicon memory": [[40.0, 42.1], [41.6, 40.9], [45.7, 43.5]], "lexicon memory": [[41.4, 42.5], [43.2, 43.8], [43.7, 44.0]]}, 48.1, 35.6))
 fig, axes = plt.subplots(1, 2, figsize=(10, 3.8), sharey=True)
 for ax, (title, wr, ex, ts) in zip(axes, games):
     for (name, vals), col, dx in zip(wr.items(), (S2, S1), (0.97, 1.03)):
-        ax.errorbar([n * dx for n in N], vals, yerr=[0.8] * 3, color=col, lw=2, marker="o", ms=5, capsize=3, label=name)
+        ax.plot([n * dx for n in N], [sum(v) / 2 for v in vals], color=col, lw=2, marker="o", ms=5, label=name)
+        for n, v in zip(N, vals): ax.scatter([n * dx] * 2, v, color=col, s=14, alpha=0.5, zorder=3)
     for yv, lab in ((ex, f"exact planner {ex}"), (ts, f"top score, no planning {ts}")):
         ax.axhline(yv, color=REF, lw=1.2, ls="--"); ax.text(2300, yv + 0.35, lab, fontsize=8.5, color=INK2)
     ax.set_xscale("log"); ax.set_xticks(N); ax.set_xticklabels(["3k", "10k", "270k"]); ax.set_xlabel("NWL training positions of the planning net")
     ax.set_ylim(34, 50); ax.set_title(title, loc="left", fontsize=10)
 axes[0].set_ylabel("win rate vs HastyBot (%)"); axes[0].legend(frameon=False, fontsize=9, loc="lower right")
-fig.suptitle("Planning policy in games: pick the move with the best predicted planning value (4000 games per point)", x=0.01, ha="left", fontsize=10.5)
+fig.suptitle("Planning policy in games (4000 games per run, ± 0.8; dots = seeds 0, 1; line = mean)", x=0.01, ha="left", fontsize=10.5)
 save(fig, "lexplan_games")
 
 # 8. dictionary transfer: planners trained on NWL23 positions, evaluated on the same positions relabelled under CSW24
@@ -160,3 +162,39 @@ ax.set_xscale("log"); ax.set_xticks(N); ax.set_xticklabels(["3k", "10k", "270k"]
 ax.set_ylabel("within-position R² of E_opp on CSW"); ax.legend(frameon=False, fontsize=8.5, loc="upper left")
 ax.set_title("Removing cross-check sets changes neither arm (zero-shot on CSW24; dots = seeds 0, 1)", loc="left", fontsize=10)
 save(fig, "lexplan_no_xchk")
+
+# 10. clean control: a no-memory net that trains its own query encoder (no dictionary-trained part) vs the round-2 arms (frozen
+# future-word encoder), all without cross-check sets; planning benchmark, NWL, 3000 held-out positions; dots = seeds 0, 1
+N = [3000, 10000, 270000]
+arms = {"no memory, frozen encoder (3.5M trained)": (S2, [[-.074, -.01], [.005, -.052], [.247, .257]], [[4.5, 4.63], [4.76, 4.75], [4.09, 4.02]]),
+        "lexicon memory, frozen encoder (3.6M)": (S1, [[.191, .159], [.206, .163], [.273, .297]], [[4.6, 4.35], [4.58, 4.32], [4.36, 3.94]]),
+        "no memory, encoder trained from scratch (6.4M)": (S3, [[.051, .016], [.106, .084], [.293, .274]], [[4.19, 4.51], [4.35, 4.25], [3.74, 3.94]])}
+fig, axes = plt.subplots(1, 2, figsize=(10, 3.8))
+for k, (ax, yl, ttl) in enumerate(((axes[0], "within-position R² of E_opp", "ranking candidates by the opponent's best reply"),
+                                   (axes[1], "critical-position regret (points)", "decisions on planning-critical positions"))):
+    for (name, (col, wo, cr)), dx in zip(arms.items(), (0.95, 1.0, 1.05)):
+        vals = (wo, cr)[k]
+        ax.plot([n * dx for n in N], [sum(v) / 2 for v in vals], color=col, lw=2, marker="o", ms=5, label=name)
+        for n, v in zip(N, vals): ax.scatter([n * dx] * 2, v, color=col, s=12, alpha=0.5, zorder=3)
+    ax.set_xscale("log"); ax.set_xticks(N); ax.set_xticklabels(["3k", "10k", "270k"]); ax.set_xlabel("training positions")
+    ax.set_ylabel(yl); ax.set_title(ttl, loc="left", fontsize=10)
+axes[0].legend(frameon=False, fontsize=8, loc="upper left")
+fig.suptitle("Clean control: no cross-checks, no dictionary-trained part (NWL planning benchmark; top-score regret 10.5)", x=0.01, ha="left", fontsize=10.5)
+save(fig, "lexplan_clean_control")
+
+# 11. two-turn horizon: labels from go/lexmem_plan H2=1 (fixed labeller), PV2 = score - E_opp + E_my2 - E_opp2; round-2 setting
+# (frozen encoder, cross-checks on); 3000 held-out positions; dots = seeds 0, 1
+h2 = {"no lexicon memory": (S2, [[.01, .008], [.051, .046], [.281, .306]], [[5.42, 4.87], [4.6, 4.64], [3.4, 3.42]]),
+      "lexicon memory": (S1, [[.209, .236], [.236, .278], [.328, .369]], [[4.31, 4.01], [3.88, 3.76], [3.37, 3.17]])}
+fig, axes = plt.subplots(1, 2, figsize=(9, 3.6))
+for k, (ax, yl, ttl) in enumerate(((axes[0], "within-position R² of E_opp", "ranking candidates by the opponent's best reply"),
+                                   (axes[1], "critical-position regret on PV2 (points)", "two-turn decisions, planning-critical positions"))):
+    for (name, (col, wo, cr)), dx in zip(h2.items(), (0.96, 1.04)):
+        vals = (wo, cr)[k]
+        ax.plot([n * dx for n in N], [sum(v) / 2 for v in vals], color=col, lw=2, marker="o", ms=5, label=name)
+        for n, v in zip(N, vals): ax.scatter([n * dx] * 2, v, color=col, s=12, alpha=0.5, zorder=3)
+    ax.set_xscale("log"); ax.set_xticks(N); ax.set_xticklabels(["3k", "10k", "270k"]); ax.set_xlabel("training positions")
+    ax.set_ylabel(yl); ax.set_title(ttl, loc="left", fontsize=10)
+axes[0].legend(frameon=False, fontsize=9, loc="upper left")
+fig.suptitle("Two-turn planning benchmark (opponent's reply, my answer, opponent again; top-score regret 10.7)", x=0.01, ha="left", fontsize=10.5)
+save(fig, "lexplan_two_turn")

@@ -8,8 +8,13 @@ decision accuracy and regret vs the exact PV answer, for all positions and for p
 top-scoring move by >= CRIT points), against the no-planning baseline (always the top-scoring move); by phase.
 Eval only: EVAL_CKPTS=a.pt,b.pt (weights from another dictionary load fine; word keys are rebuilt for LEXICON); SENS_REF=<labels of the
 same positions under another dictionary> adds a report on the quarter of positions whose labels moved most.
+QINIT=random: the query encoder starts fresh and is trained (a control with no dictionary-trained part; default: from the future-word
+model, frozen). HORIZON=2 (labels from go/lexmem_plan H2=1): three outputs E_opp, E_my2, E_opp2 and the two-turn planning value
+PV2 = score - E_opp + E_my2 - E_opp2.
 Usage: ARM=lex MAX_TRAIN=50000 STEPS=20000 SEED=0 TAG=lexplan_lex_50k python train/train_lexplan.py"""
 import os, sys, time, math, pickle, random, importlib.util, numpy as np, torch, torch.nn.functional as F
+H2 = os.environ.get("HORIZON", "1") == "2"
+if H2: os.environ["NOUT"] = "3"
 from torch.utils.data import Dataset, DataLoader
 spec = importlib.util.spec_from_file_location("tlv", os.path.join(os.path.dirname(__file__), "train_lexvalue.py")); tlv = importlib.util.module_from_spec(spec); spec.loader.exec_module(tlv)
 from lexmem.core import *
@@ -18,6 +23,10 @@ HOLD = int(E("HOLDOUT_MOD", 10)); MAX_TRAIN = int(E("MAX_TRAIN", 0)); STEPS = in
 SEED = int(E("SEED", 0)); NW = int(E("NWORK", 28)); NEVP = int(E("NEV_POS", 3000)); CRIT = float(E("CRIT", 5.0)); TAG = E("TAG", f"lexplan_{tlv.ARM}")
 LOSS = E("LOSS", "reg")   # reg: regress E_opp, E_my per candidate; rank: + listwise CE on the planning value over each position's candidates
 TAU = float(E("TAU", 1.5)); RANK_W = float(E("RANK_W", 1.0)); BPOS = int(E("BPOS", 4))   # rank mode: positions per batch (x up to 16 candidates)
+QINIT = E("QINIT", "fut")
+# targets: (name, index in the cands tuple, sign in the planning value)
+TGT = [("E_opp", 2, -1), ("E_my2", 6, 1), ("E_opp2", 7, -1)] if H2 else [("E_opp", 2, -1), ("E_my", 3, 1)]
+assert not (H2 and LOSS == "rank")
 torch.manual_seed(SEED); random.seed(SEED); np.random.seed(SEED)
 data = pickle.load(open(E("DATA", "data/plan_v1.pkl"), "rb"))
 train_pos = [i for i, r in enumerate(data) if r["gi"] % HOLD != 0]; held_pos = [i for i, r in enumerate(data) if r["gi"] % HOLD == 0]
@@ -33,6 +42,7 @@ def item(i, j):
     it = tlv.build(rec, (0, 0), None)
     if it is None: return None
     it["G"], it["W"] = np.float32(eo / 50), np.float32(em / 50); it["pos"], it["cand_j"] = i, j
+    if H2: c = data[i]["cands"][j]; it["W"], it["G2"] = np.float32(c[6] / 50), np.float32(c[7] / 50)
     return it
 class DS(Dataset):
     def __init__(self, seed): self.rng = random.Random(seed)
@@ -58,12 +68,16 @@ def coll_pos(groups):
     b["grp"] = torch.tensor([gi for gi, g in enumerate(groups) for _ in g]); b["sc"] = torch.tensor([float(data[it["pos"]]["cands"][it["cand_j"]][1]) for it in items])
     return b
 def coll(items):
-    b = tlv.collate(items); b["pos"] = torch.tensor([it["pos"] for it in items]); b["cand_j"] = torch.tensor([it["cand_j"] for it in items]); return b   # not "cand": that is the lex arm's retrieval tensor
+    b = tlv.collate(items); b["pos"] = torch.tensor([it["pos"] for it in items]); b["cand_j"] = torch.tensor([it["cand_j"] for it in items])   # not "cand": that is the lex arm's retrieval tensor
+    if H2: b["G2"] = torch.tensor([it["G2"] for it in items])
+    return b
 
 model = tlv.LexValue().to(dev)
 sd = torch.load(E("INIT_FUT", "data/future_R1.pt"), map_location=dev)
-model.qenc.load_state_dict({k[5:]: v for k, v in sd.items() if k.startswith("qenc.")})
-for p in model.qenc.parameters(): p.requires_grad_(False)
+if QINIT == "fut":
+    model.qenc.load_state_dict({k[5:]: v for k, v in sd.items() if k.startswith("qenc.")})
+    for p in model.qenc.parameters(): p.requires_grad_(False)
+print(f"query encoder: {'future-word model, frozen' if QINIT == 'fut' else 'fresh, trained'}; horizon {2 if H2 else 1}", flush=True)
 if tlv.LEXARM:
     model.wenc.load_state_dict({k[5:]: v for k, v in sd.items() if k.startswith("wenc.") and not k.startswith("wenc.slot") and k not in ("wenc.POS", "wenc.LEN")}, strict=False)
     model.refresh_keys()
@@ -93,21 +107,21 @@ def evaluate(tag, subset=None):
         v = v.float().cpu().numpy() * 50
         for t in range(len(v)): pred[(int(b["pos"][t]), int(b["cand_j"][t]))] = v[t]
     model.train()
-    yo, po, ym, pm, wo, wm = [], [], [], [], [], []; rows = []
+    ys, ps, ws = [[] for _ in TGT], [[] for _ in TGT], [[] for _ in TGT]; rows = []
     for i in held_pos:
         if subset is not None and i not in subset: continue
         cs = data[i]["cands"]; js = [j for j in range(len(cs)) if (i, j) in pred]
         if len(js) < 2: continue
-        to = np.array([cs[j][2] for j in js]); tm = np.array([cs[j][3] for j in js]); sc = np.array([cs[j][1] for j in js], dtype=float)
-        qo = np.array([pred[(i, j)][0] for j in js]); qm = np.array([pred[(i, j)][1] for j in js])
-        yo += list(to); po += list(qo); ym += list(tm); pm += list(qm)
-        wo += list(zip(to - to.mean(), qo - qo.mean())); wm += list(zip(tm - tm.mean(), qm - qm.mean()))
-        pv = sc - to + tm; best = int(np.argmax(pv)); ch = int(np.argmax(sc - qo + qm)); base = int(np.argmax(sc))
+        sc = np.array([cs[j][1] for j in js], dtype=float); pv, pvh = sc.copy(), sc.copy()
+        for t, (_, ix, sg) in enumerate(TGT):
+            y = np.array([cs[j][ix] for j in js]); q = np.array([pred[(i, j)][t] for j in js])
+            ys[t] += list(y); ps[t] += list(q); ws[t] += list(zip(y - y.mean(), q - q.mean())); pv += sg * y; pvh += sg * q
+        best = int(np.argmax(pv)); ch = int(np.argmax(pvh)); base = int(np.argmax(sc))
         rows.append((ch == best, pv[best] - pv[ch], base == best, pv[best] - pv[base], pv[best] - pv[base] >= CRIT, data[i]["bag"]))
     def r2(y, p): y, p = np.array(y), np.array(p); return 1 - ((y - p) ** 2).mean() / max(y.var(), 1e-9)
     def r2w(z): z = np.array(z); return 1 - ((z[:, 0] - z[:, 1]) ** 2).mean() / max((z[:, 0] ** 2).mean(), 1e-9)
     R = np.array(rows, dtype=float); crit = R[:, 4] == 1
-    line = (f"[{tag}] positions {len(R)}: R2 E_opp {r2(yo, po):.3f} (within {r2w(wo):.3f}), E_my {r2(ym, pm):.3f} (within {r2w(wm):.3f}) | "
+    line = (f"[{tag}] positions {len(R)}: R2 " + ", ".join(f"{nm} {r2(ys[t], ps[t]):.3f} (within {r2w(ws[t]):.3f})" for t, (nm, _, _) in enumerate(TGT)) + " | "
             f"decision acc {R[:,0].mean():.3f} regret {R[:,1].mean():.2f} pts (top-score baseline acc {R[:,2].mean():.3f} regret {R[:,3].mean():.2f})")
     if crit.sum(): line += f" | critical n={int(crit.sum())}: acc {R[crit,0].mean():.3f} regret {R[crit,1].mean():.2f} (baseline regret {R[crit,3].mean():.2f})"
     for lo, hi, nm in ((61, 100, "opening"), (31, 60, "middle"), (8, 30, "late"), (0, 7, "pre-end/end")):
@@ -138,6 +152,7 @@ for b in loader:
     b = {k: v.to(dev, non_blocking=True) for k, v in b.items()}
     with torch.autocast(dev, dtype=torch.bfloat16, enabled=dev == "cuda"): v, _ = model(b)
     v = v.float(); loss = F.smooth_l1_loss(v[:, 0], b["G"]) + F.smooth_l1_loss(v[:, 1], b["W"])
+    if H2: loss = loss + F.smooth_l1_loss(v[:, 2], b["G2"])
     if LOSS == "rank":   # listwise: predicted PV = score - 50 E_opp + 50 E_my vs exact PV, softmax over each position's candidates
         pv_hat = b["sc"] - 50 * v[:, 0] + 50 * v[:, 1]; pv = b["sc"] - 50 * b["G"] + 50 * b["W"]; lr_ = 0.0
         for g in b["grp"].unique():

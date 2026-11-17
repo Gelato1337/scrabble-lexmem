@@ -244,3 +244,95 @@ every cell of both arms, and the memory's lead on ranking is unchanged. Regret m
 is the seed spread at 3k (e.g. no-lex 3k seed 0 vs 1 on CSW: 6.28 vs 5.08 critical with cross-checks). So the round-2d explanation
 (the control transfers through CSW cross-check sets) is wrong: the control learns what it needs from the labelled positions
 (and possibly the shared NWL-pretrained query encoder), given enough of them.
+
+## Round 3 (2026-11-17)
+
+**Labeller bugs (fixed).** Checking `go/lexmem_plan` against full move enumeration (`CHECK=1`) found three problems in the binary
+used for `plan_v1`, `plan_csw` and the exact planner of rounds 2c–2e:
+1. The best-score generators had the game attached. When the sampled bag was empty, Macondo's shadow search then pruned with
+   endgame bounds (not-playing-out penalty) while ranking plays by raw score, and returned a lower-scoring play in 4.2 % of
+   evaluations (3419 of 81,920 in a 40-position test). Fix: no game on those generators (score-only bounds).
+2. The bag's tile order before the seeded shuffle was random (the candidate's own refill is drawn with the CGP game's unseeded RNG),
+   so labels were not reproducible and candidates did not share their tile samples. Fix: canonical order before every shuffle.
+3. Ties at the top-K cut were broken by map iteration order. Fix: full sort key.
+
+The fixed binary is deterministic (same output across runs and worker counts) and agrees with full enumeration on every
+evaluation. Old vs fixed labels on the 300k positions (candidates matched; new − old):
+
+| Phase | E_opp shift (mean / mean abs) | E_my shift (mean / mean abs) | one-turn best move changed |
+|---|---|---|---|
+| all | +0.13 / 1.24 | +0.28 / 1.11 | 23 % |
+| opening | −0.02 / 1.37 | +0.35 / 1.33 | 30 % |
+| middle | −0.08 / 1.34 | +0.09 / 1.15 | 23 % |
+| late | −0.05 / 1.13 | 0.00 / 0.99 | 21 % |
+| pre-end / end | **+0.81** / 1.09 | **+0.74** / 0.94 | 19 % |
+
+The bias is confined to the end of the game; the rest is sampling noise in the old labels (unshared samples), which is enough to
+flip the best move where candidates are within a point of each other. The round-2 one-turn checkpoints re-scored on the fixed
+labels (same positions and held-out set, seeds 0–1) keep their ordering: all regrets drop by ~0.2 (less label noise), the gaps do
+not change.
+
+| Training positions | Arm | R² E_opp within | R² E_my within | Regret all | Regret critical |
+|---|---|---|---|---|---|
+| 3k | no-lex / lex | −0.037 / **0.171** | 0.274 / **0.428** | 1.83 / **1.63** | 5.22 / **4.35** |
+| 10k | no-lex / lex | 0.003 / **0.224** | 0.357 / **0.444** | 1.65 / 1.60 | 4.42 / **4.17** |
+| 270k | no-lex / lex | 0.293 / **0.325** | 0.503 / **0.536** | 1.45 / 1.39 | 3.80 / 3.63 |
+| — | top-score baseline | | | 2.95 | 10.42 |
+
+**Paired games, seeds 0 and 1** (4000 games per run vs HastyBot, seeds 777000, spreads stored by game index; lex − no-lex = mean
+per-game difference of wins, ± its standard error, i.e. game noise only):
+
+| Dictionary | Training positions | no-lex s0 / s1 | lex s0 / s1 | lex − no-lex s0 / s1 | pooled |
+|---|---|---|---|---|---|
+| NWL | 3k | 38.9 / 43.1 | 43.4 / 43.0 | +4.5 / −0.2 | **+2.2 ± 0.6** |
+| NWL | 10k | 42.5 / 41.0 | 43.7 / 43.3 | +1.1 / +2.3 | **+1.7 ± 0.6** |
+| NWL | 270k | 43.4 / 44.0 | 43.5 / 43.2 | +0.1 / −0.9 | −0.4 ± 0.6 |
+| CSW | 3k | 40.0 / 42.1 | 41.4 / 42.5 | +1.5 / +0.4 | +0.9 ± 0.6 |
+| CSW | 10k | 41.6 / 40.9 | 43.2 / 43.8 | +1.6 / +2.9 | **+2.3 ± 0.6** |
+| CSW | 270k | 45.7 / 43.5 | 43.7 / 44.0 | −2.0 / +0.5 | −0.7 ± 0.6 |
+
+Top score 36.6 % (NWL) / 35.6 % (CSW); exact planner with the fixed labeller **48.2 % / 48.1 %** (old labeller: 46.7 / 48.4). Seed-0 net
+runs reproduce rounds 2c/2e to ±0.1. The round-2c headline (+4.4 at 3k) was seed 0; seed 1's control is as strong as the memory
+arm, so the seed-to-seed spread is larger than the game noise. Per-game outcomes of two planners agree in 68–71 % of games.
+First- vs second-seat win rates are now meaningful (first seat ~9 points higher for every player); the seat splits printed before
+2026-11-17 came from completion order and carry no information.
+
+**Clean control** (`QINIT=random NO_XCHK=1`, no-lex): the query encoder starts fresh and is trained, so the control has no
+dictionary-trained part and no cross-checks; it also trains 6.37M parameters vs 3.50M (frozen-encoder control) and 3.57M (memory
+arm, encoder frozen). NWL benchmark (round-2 labels, as the other rows) and zero-shot CSW, means of seeds 0–1, all arms without
+cross-checks:
+
+| Eval | Training positions | R² E_opp within: frozen no-lex / lex / clean | Regret all | Regret critical |
+|---|---|---|---|---|
+| NWL | 3k | −0.042 / **0.175** / 0.034 | 1.89 / 1.84 / **1.80** | 4.57 / 4.48 / **4.35** |
+| NWL | 10k | −0.024 / **0.184** / 0.095 | 1.91 / 1.82 / **1.74** | 4.76 / 4.45 / **4.30** |
+| NWL | 270k | 0.252 / **0.285** / 0.283 | 1.68 / 1.72 / **1.60** | 4.06 / 4.15 / **3.84** |
+| CSW zero-shot | 3k | −0.029 / **0.173** / 0.038 | 2.07 / 2.01 / **1.94** | 5.03 / 4.86 / **4.70** |
+| CSW zero-shot | 10k | −0.014 / **0.181** / 0.097 | 2.05 / 1.94 / **1.86** | 5.00 / 4.66 / **4.62** |
+| CSW zero-shot | 270k | 0.229 / **0.288** / 0.260 | 1.83 / 1.79 / **1.66** | 4.49 / 4.22 / **3.99** |
+
+Without any dictionary-trained part the control is better than with the frozen word-prediction encoder on every metric. The
+memory still ranks candidates by the opponent's threat better at 3k–10k (+0.09–0.14 within-position R²), but the clean control
+makes the better decisions at every size, in-domain and zero-shot on CSW. Its extra trainable capacity is a confound: the
+comparison that isolates the memory is a memory arm with a trainable encoder too (not yet run).
+
+**Two-turn horizon** (`go/lexmem_plan H2=1`, fixed labeller, same 300k positions, record order of `plan_v1`): after the candidate the
+opponent plays its best-scoring reply, I answer with my best-scoring play (leave + refill), the opponent plays again (its leave +
+refill); E_my2, E_opp2 = means over 256 samples; PV2 = score − E_opp + E_my2 − E_opp2. The two-turn answer differs from the
+one-turn answer in 29 % of positions (one-turn answer loses 1.07 PV2 points on average, 1.51 at the end); 24.7 % of positions are
+critical under PV2 vs 22.0 % under PV. `train_lexplan.py HORIZON=2`: three outputs, round-2 setting (frozen encoder, cross-checks
+on), seeds 0–1:
+
+| Training positions | Arm | R² within: E_opp / E_my2 / E_opp2 | Regret all (PV2) | Regret critical (PV2) |
+|---|---|---|---|---|
+| 3k | no-lex | 0.009 / 0.447 / −0.009 | 2.13 | 5.15 |
+| 3k | lex | **0.222 / 0.516** / −0.013 | **1.83** | **4.16** |
+| 10k | no-lex | 0.049 / 0.504 / 0.022 | 2.00 | 4.62 |
+| 10k | lex | **0.257 / 0.548** / 0.051 | **1.70** | **3.82** |
+| 270k | no-lex | 0.293 / 0.633 / 0.167 | 1.48 | 3.41 |
+| 270k | lex | **0.349** / 0.624 / 0.163 | 1.46 | 3.27 |
+| — | top-score baseline | | 3.32 | 10.73 |
+
+Same shape as one turn: a clear memory advantage at 3k–10k (critical regret −1.0 and −0.8, both seeds), converging by 270k
+(−0.14). Neither arm learns the opponent's second reply below 270k positions. Against the frozen-encoder control only; the clean
+control was not run on two turns.

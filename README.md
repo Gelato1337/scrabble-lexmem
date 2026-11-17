@@ -225,12 +225,12 @@ at 3k positions, 4.40 vs 4.67 at 10k — and the control catches up as data grow
 
 ![Planning benchmark](docs/figures/lexplan_within_r2.png)
 
-### 9. …and it shows up in games (Oct 27)
+### 9. …and it shows up in games, by about 2 points (Oct 27; two seeds Nov 17)
 A planning policy — among the top 16 plays by score, play the one with the best predicted score − E_opp + E_my — against
-HastyBot, 4000 paired games per player. Planning is worth +10 points of win rate (top score 36.6 %, exact planner 46.7 %).
-Trained on 3k positions, the memory planner reaches **43.3 %**, the control **38.9 %** (+4.4 points, ~5 standard errors); at 10k
-the gap is +1.2 and at 270k they are equal. Same picture as the benchmark: the lexicon memory buys sample efficiency for
-word-dependent planning, and it carries through to winning games.
+HastyBot, 4000 games per run on shared seeds. Planning is worth +12 points of win rate (top score 36.6 %, exact planner 48.2 %).
+With seed-0 nets the memory planner led by +4.4 points at 3k positions; seed 1's control is as strong as the memory arm, and
+over both seeds the lead is **+2.2 ± 0.6 at 3k, +1.7 ± 0.6 at 10k and −0.4 ± 0.6 at 270k** (game noise only; seeds vary more
+than that). The memory's sample-efficiency advantage reaches games, smaller than the first run suggested.
 
 ![Planning policies in games](docs/figures/lexplan_games.png)
 
@@ -243,10 +243,9 @@ positions (4.05). At small data the memory's advantage is as large as in NWL. De
 
 ![Dictionary transfer](docs/figures/lexplan_csw_transfer.png)
 
-In games the transfer advantage does not appear. The same nets against HastyBot playing CSW24 (4000 games each; right panel of
-the games figure in finding 9): planning is worth +13 points (top score 35.6 %, exact planner 48.4 %), but the memory planner leads
-by only +1.4 at 3k and +1.6 at 10k (NWL: +4.4, +1.2), and at 270k the control wins more, 45.7 % vs 43.7 %. One checkpoint per arm, so
-gaps of 1–2 points are not resolved.
+In games the transfer advantage does not appear. The same nets against HastyBot playing CSW24 (right panel of the games figure in
+finding 9; two seeds): planning is worth +12.5 points (top score 35.6 %, exact planner 48.1 %), and the memory planner's lead is
++0.9 ± 0.6 at 3k, +2.3 ± 0.6 at 10k and −0.7 ± 0.6 at 270k — the same size as in NWL, not larger.
 
 ### 11. Without cross-check sets the control does not collapse (Nov 1)
 Isolation test: both arms retrained with the cross-check letters removed from their lane tokens, the control's only
@@ -257,6 +256,33 @@ themselves, given enough of them; so far the memory buys **sample efficiency, no
 frozen query encoder pretrained on NWL future-word prediction, so the control is not fully dictionary-free.
 
 ![No cross-check sets](docs/figures/lexplan_no_xchk.png)
+
+### 12. The exact-label tool had an endgame bug (Nov 17)
+Building the two-turn labeller, a check against full move enumeration showed that `go/lexmem_plan` missed the best play in 4 % of
+evaluations: with the game attached, an empty sampled bag switched Macondo's shadow search to endgame bounds while plays were
+ranked by raw score. Its tile samples were also neither reproducible nor shared across candidates. Fixed (deterministic, exact on
+every checked evaluation). The old labels were biased by +0.8 points only at the end of the game and otherwise just noisier;
+the round-2 checkpoints re-scored on corrected labels keep the same lex vs no-lex gaps, and the exact planner gains 1.5 points
+in NWL games (48.2 %). Details: [docs/benchmarks.md](docs/benchmarks.md#round-3-2026-11-17).
+
+### 13. A control that trains its own encoder decides as well as the memory (Nov 17)
+Clean control: no memory, no cross-checks, and a query encoder trained from scratch instead of the frozen word-prediction
+encoder both round-2 arms used. It has no dictionary-trained part at all — and it is better than the round-2 control on every
+metric, and its **decisions are at least as good as the memory arm's at every size**, in-domain and zero-shot on CSW (critical
+regret 4.35 vs 4.48 at 3k, 3.84 vs 4.15 at 270k; means of two seeds, gaps of 0.04–0.31 points, comparable to the seed spread). The memory still ranks candidates by the opponent's threat better at 3k–10k (within-position R²
+0.18 vs 0.03–0.10). Caveat: the clean control trains 6.4M parameters, the memory arm 3.6M (its encoder stays frozen); the test that
+isolates the memory is a memory arm with a trainable encoder.
+
+![Clean control](docs/figures/lexplan_clean_control.png)
+
+### 14. Two-turn planning: same picture as one turn (Nov 17)
+Exact two-turn labels on the same 300k positions: the opponent's best reply is played, then my best answer, then the opponent's
+next play (PV2 = score − E_opp + E_my2 − E_opp2). The two-turn answer differs from the one-turn answer in 29 % of positions. The
+memory arm is clearly better at small data (critical regret 4.16 vs 5.15 at 3k, 3.82 vs 4.62 at 10k, both seeds) and the arms
+converge by 270k (3.27 vs 3.41) — a larger horizon does not open a gap that data cannot close. (Against the frozen-encoder
+control.)
+
+![Two-turn planning](docs/figures/lexplan_two_turn.png)
 
 ## Repository layout
 
@@ -345,9 +371,11 @@ LEXICON=data/CSW24.txt MACONDO_LEX=CSW24 PLAN_WORDS=data/lexwords_csw.txt PLAN=e
 ```
 
 ## Pitfalls worth knowing
-- Win-rate differences of 1–2 points need thousands of games; compare nets on the same seeds (`play_eval.py ... 777000`). Since
-  2026-11-01 `play_eval.py` stores each game's spread at its game index, so two runs can be compared game by game; earlier
-  pickles are in completion order, and planner runs before then overwrote one another's file.
+- Win-rate differences of 1–2 points need thousands of games; compare nets on the same seeds (`play_eval.py ... 777000`) and with
+  more than one training seed (seed spread exceeds game noise). Since 2026-11-01 `play_eval.py` stores each game's spread at its
+  game index (`tools/paired_games.py` pairs runs game by game); earlier pickles are in completion order, so their printed
+  first/second-seat splits are meaningless, and planner runs before then overwrote one another's file.
+- `go/lexmem_plan`: never attach the game to a score-only top-play generator (endgame shadow bounds); run `CHECK=1` after changes.
 - Macondo's endgame table takes 20 % of the node's RAM per process unless `GOMEMLIMIT` is set (the harness sets 2 GiB); its endgame
   solver can return an empty sequence on time-out (our wrapper falls back to the static move).
 - Scores of blank plays: always use `legal_moves` / `designate` (exact); Python self-play data from before 2026-10-13 used inflated

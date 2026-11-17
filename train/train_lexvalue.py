@@ -18,6 +18,7 @@ E = os.environ.get; dev = "cuda" if torch.cuda.is_available() else "cpu"
 ARM = E("ARM", "lex"); LEXARM = ARM == "lex"; NL = int(E("NLANES", 12)); CAP = int(E("CAP", 256)); STEPS = int(E("STEPS", 40000))
 B = int(E("B", 64)); LR = float(E("LR", 2e-4)); HOLD = int(E("HOLDOUT_MOD", 20)); NW = int(E("NWORK", 24)); TAG = E("TAG", f"lexvalue_{ARM}")
 AUXW = float(E("AUX_W", 0.5)); NEV = int(E("NEV", 4000)); NEV_SUB = int(E("NEV_SUB", 4000)); D = 256
+NOUT = int(E("NOUT", 2))   # regression outputs of the value head (train_lexplan HORIZON=2 uses 3)
 NO_XCHK = E("NO_XCHK", "0") == "1"   # isolation test: lane tokens carry no cross-check letters (the only dictionary-derived input), both arms
 TARGET = E("TARGET", "outcome")   # outcome: the game's own result; ro: mean of K rollouts from the afterstate (rec["ro"])
 FREEZE_Q = E("FREEZE_Q", "0") == "1"; MAX_TRAIN = int(E("MAX_TRAIN", 0))   # frozen query encoder (both arms); fixed training subsample
@@ -115,7 +116,7 @@ class LexValue(nn.Module):
             self.wenc = WordEncoder(lex, D, slot=False); self.register_buffer("keys", torch.zeros(lex.NW, D))
             self.up = nn.Linear(D, D); self.us = nn.Linear(3, D); self.scale = nn.Parameter(torch.tensor(D ** -0.5))
         enc = nn.TransformerEncoderLayer(D, 4, 4 * D, dropout=0.0, batch_first=True, norm_first=True)
-        self.tr = nn.TransformerEncoder(enc, 3); self.norm = nn.LayerNorm(D); self.val = nn.Sequential(nn.Linear(D, D), nn.GELU(), nn.Linear(D, 2))
+        self.tr = nn.TransformerEncoder(enc, 3); self.norm = nn.LayerNorm(D); self.val = nn.Sequential(nn.Linear(D, D), nn.GELU(), nn.Linear(D, NOUT))
     @torch.no_grad()
     def refresh_keys(self):
         for i in range(0, lex.NW, 8192):

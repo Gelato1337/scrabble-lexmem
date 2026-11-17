@@ -6,8 +6,14 @@
 //           bag holds; ignoring the opponent's move),
 // best = highest-scoring legal play over the whole lexicon (Macondo shadow top-play, score only; bingo bonus included).
 // Planning value PV = score - E_opp + E_my. No policy, no value net, no leave table: only the rules and the dictionary.
-// stdin: {"id":..,"cgp":".."} per line; stdout: {"id":..,"cands":[{"d":[0,r,c,d,L,widx,score,blanks],"eo":..,"em":..,"so":..,"sm":..}]}
-// Env: K S LEXWORDS (our word order for widx) LEXICON (KWG name, default NWL23) WORKERS
+// H2=1 adds a two-turn horizon on the same samples, every side playing its best-scoring move: the opponent's best reply is played,
+//   E_my2  = mean best score of the mover (leave + refill) on the board after that reply,
+//   E_opp2 = mean best score of the opponent's next play after the mover's best play (its leave + refill from the bag);
+//   two-turn planning value PV2 = score - E_opp + E_my2 - E_opp2. CHECK=1 recomputes cross-sets and anchors from scratch for every
+//   two-turn board and reports mismatches with the incremental update on stderr.
+// stdin: {"id":..,"cgp":".."} per line; stdout: {"id":..,"cands":[{"d":[0,r,c,d,L,widx,score,blanks],"eo":..,"em":..,"so":..,"sm":..,
+//   "h2":{"em2":..,"eo2":..,"sm2":..,"so2":..}}]}
+// Env: K S LEXWORDS (our word order for widx) LEXICON (KWG name, default NWL23) WORKERS H2 CHECK
 package main
 
 import (
@@ -21,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/domino14/word-golib/kwg"
 	"github.com/domino14/word-golib/tilemapping"
@@ -28,6 +35,8 @@ import (
 
 	"github.com/domino14/macondo/cgp"
 	"github.com/domino14/macondo/config"
+	"github.com/domino14/macondo/cross_set"
+	"github.com/domino14/macondo/board"
 	"github.com/domino14/macondo/game"
 	"github.com/domino14/macondo/move"
 	"github.com/domino14/macondo/movegen"
@@ -39,6 +48,8 @@ func envI(k string, d int) int {
 }
 
 var wordIdx map[string]int32
+var h2, check bool
+var nCheck, nShadow, nIncr, nB1, nB1Check int64
 
 type In struct {
 	ID  json.RawMessage `json:"id"`
@@ -50,6 +61,13 @@ type Cand struct {
 	EM float64 `json:"em"`
 	SO float64 `json:"so"`
 	SM float64 `json:"sm"`
+	H2 *Two    `json:"h2,omitempty"`
+}
+type Two struct {
+	EM2 float64 `json:"em2"`
+	EO2 float64 `json:"eo2"`
+	SM2 float64 `json:"sm2"`
+	SO2 float64 `json:"so2"`
 }
 type Out struct {
 	ID    json.RawMessage `json:"id"`
@@ -61,6 +79,37 @@ func bestScore(gen *movegen.GordonGenerator, rack *tilemapping.Rack) int {
 	ps := gen.GenAll(rack, false)
 	if len(ps) == 0 || ps[0].Action() != move.MoveTypePlay { return 0 }
 	return ps[0].Score()
+}
+
+// bestMove: best-scoring play for rack, copied into dst (the top-play recorder reuses its move); ok = false when no play exists.
+func bestMove(gen *movegen.GordonGenerator, rack *tilemapping.Rack, dst *move.Move) (int, bool) {
+	ps := gen.GenAll(rack, false)
+	if len(ps) == 0 || ps[0].Action() != move.MoveTypePlay { return 0, false }
+	dst.CopyFrom(ps[0])
+	return ps[0].Score(), true
+}
+
+// playOn: put m on b and bring its cross-sets up to date (anchors are updated by PlayMove).
+func playOn(b *board.GameBoard, m *move.Move, gd *kwg.KWG, ld *tilemapping.LetterDistribution) {
+	b.PlayMove(m); cross_set.UpdateCrossSetsForMove(b, m, gd, ld)
+}
+
+// maxScore: best score for rack by full enumeration (no shadow pruning) on a copy of b; scratch = recompute all cross-sets and anchors.
+func maxScore(b *board.GameBoard, rack *tilemapping.Rack, scratch bool, gd *kwg.KWG, ld *tilemapping.LetterDistribution) int {
+	bc := b.Copy()
+	if scratch { cross_set.GenAllCrossSets(bc, gd, ld); bc.UpdateAllAnchors() }
+	gen := movegen.NewGordonGenerator(gd, bc, ld); gen.SetSortingParameter(movegen.SortByScore); best := 0
+	for _, m := range gen.GenAll(rack, false) { if m.Action() == move.MoveTypePlay && m.Score() > best { best = m.Score() } }
+	return best
+}
+
+// checkBest: the shadow top play on the incrementally updated board (got) vs full enumeration on it, and full enumeration on it vs on a
+// from-scratch copy (incremental cross-set update).
+func checkBest(b *board.GameBoard, rack *tilemapping.Rack, got int, gd *kwg.KWG, ld *tilemapping.LetterDistribution) {
+	fi, fs := maxScore(b, rack, false, gd, ld), maxScore(b, rack, true, gd, ld)
+	atomic.AddInt64(&nCheck, 1)
+	if got != fi { atomic.AddInt64(&nShadow, 1) }
+	if fi != fs { atomic.AddInt64(&nIncr, 1) }
 }
 
 func label(cfg *config.Config, gd *kwg.KWG, in In, K, S int) Out {
@@ -92,12 +141,19 @@ func label(cfg *config.Config, gd *kwg.KWG, in In, K, S int) Out {
 	}
 	cs := make([]c, 0, len(best))
 	for _, v := range best { cs = append(cs, v) }
-	sort.Slice(cs, func(i, j int) bool { if cs[i].score != cs[j].score { return cs[i].score > cs[j].score }; return cs[i].d[5] < cs[j].d[5] })
+	sort.Slice(cs, func(i, j int) bool {   // full key (score, word, square, direction): map order must not decide which plays make the top K
+		for _, t := range [][2]int{{cs[j].score, cs[i].score}, {cs[i].d[5], cs[j].d[5]}, {cs[i].d[1], cs[j].d[1]}, {cs[i].d[2], cs[j].d[2]}, {cs[i].d[3], cs[j].d[3]}} {
+			if t[0] != t[1] { return t[0] < t[1] }
+		}
+		return false
+	})
 	if len(cs) > K { cs = cs[:K] }
 	for _, cd := range cs {
 		gc := g.Copy(); gc.SetBackupMode(game.InteractiveGameplayMode)
 		if err := gc.PlayMove(cd.m, false, 0); err != nil { continue }
-		leave := cd.m.Leave(); tg := movegen.NewGordonGenerator(gd, gc.Board(), ld); tg.SetGame(gc)
+		// best-score generators get no game: with one, an empty bag switches the shadow pass to endgame bounds (not-playing-out
+		// penalties) while plays are ranked by raw score, so it can prune the highest-scoring play
+		leave := cd.m.Leave(); tg := movegen.NewGordonGenerator(gd, gc.Board(), ld)
 		tg.SetSortingParameter(movegen.SortByScore); tg.SetPlayRecorderTopPlay()
 		// pool = every tile the mover cannot see after the move (the CGP bag holds the real bag + the opponent's rack)
 		gc.ThrowRacksIn()
@@ -105,19 +161,58 @@ func label(cfg *config.Config, gd *kwg.KWG, in In, K, S int) Out {
 		alph := g.Alphabet(); bag := gc.Bag(); bufO := make([]tilemapping.MachineLetter, 7); bufM := make([]tilemapping.MachineLetter, 7)
 		rO, rM := tilemapping.NewRack(alph), tilemapping.NewRack(alph)
 		so, so2, sm, sm2 := 0.0, 0.0, 0.0, 0.0
+		// two-turn scratch: boards after the opponent's reply (b2) and after the mover's next play (b3), one generator each
+		var b2, b3 *board.GameBoard; var g2, g3 *movegen.GordonGenerator; var m1, m2 *move.Move; var rO2 *tilemapping.Rack
+		bufR := make([]tilemapping.MachineLetter, 7); tm2, tm22, to2, to22 := 0.0, 0.0, 0.0, 0.0
+		if h2 {
+			b2, b3 = gc.Board().Copy(), gc.Board().Copy(); m1, m2 = new(move.Move), new(move.Move); rO2 = tilemapping.NewRack(alph)
+			g2 = movegen.NewGordonGenerator(gd, b2, ld); g2.SetSortingParameter(movegen.SortByScore); g2.SetPlayRecorderTopPlay()
+			g3 = movegen.NewGordonGenerator(gd, b3, ld); g3.SetSortingParameter(movegen.SortByScore); g3.SetPlayRecorderTopPlay()
+		}
 		for s := 0; s < S; s++ {
-			var sd [32]byte; binary.LittleEndian.PutUint64(sd[:], uint64(s)+1); gc.SeedBag(sd); bag.Shuffle()
+			// canonical tile order before the seeded shuffle: reproducible, and candidates share their draws as far as their pools allow
+			var sd [32]byte; binary.LittleEndian.PutUint64(sd[:], uint64(s)+1); gc.SeedBag(sd)
+			bt := bag.Tiles(); sort.Slice(bt, func(i, j int) bool { return bt[i] < bt[j] }); bag.Shuffle()
 			pool := bag.TilesRemaining(); ko := pool; if ko > 7 { ko = 7 }
 			km := 7 - len(leave); if km > pool-ko { km = pool - ko }; if km < 0 { km = 0 }
 			if err := bag.Draw(ko, bufO); err != nil { continue }
 			if err := bag.Draw(km, bufM); err != nil { bag.PutBack(bufO[:ko]); continue }
 			rO.Set(bufO[:ko]); rM.Set(append(append([]tilemapping.MachineLetter{}, leave...), bufM[:km]...))
-			o := float64(bestScore(tg, rO)); mm := float64(bestScore(tg, rM))
+			var o float64; ok1 := false
+			if h2 { var oi int; oi, ok1 = bestMove(tg, rO, m1); o = float64(oi) } else { o = float64(bestScore(tg, rO)) }
+			mm := float64(bestScore(tg, rM))
+			if check {   // one-turn labels on the board after the candidate: shadow top play vs full enumeration
+				atomic.AddInt64(&nB1Check, 2)
+				if int(o) != maxScore(gc.Board(), rO, false, gd, ld) { atomic.AddInt64(&nB1, 1) }
+				if int(mm) != maxScore(gc.Board(), rM, false, gd, ld) { atomic.AddInt64(&nB1, 1) }
+			}
+			if h2 {
+				// opponent plays its best reply (or passes), then draws; the mover answers with leave + refill; the opponent replies again
+				b2.CopyFrom(gc.Board()); t1 := 0
+				if ok1 { playOn(b2, m1, gd, ld); t1 = m1.TilesPlayed() }
+				my2, ok2 := bestMove(g2, rM, m2)
+				if check { checkBest(b2, rM, my2, gd, ld) }
+				b3.CopyFrom(b2)
+				if ok2 { playOn(b3, m2, gd, ld) }
+				rO2.CopyFrom(rO)
+				if ok1 { for _, t := range m1.Tiles() { if t == 0 { continue }; if t.IsBlanked() { rO2.Take(0) } else { rO2.Take(t) } } }
+				n3 := t1; if r := bag.TilesRemaining(); n3 > r { n3 = r }
+				if n3 > 0 { if err := bag.Draw(n3, bufR); err != nil { n3 = 0 } else { for _, t := range bufR[:n3] { rO2.Add(t) } } }
+				o2 := bestScore(g3, rO2)
+				if check { checkBest(b3, rO2, o2, gd, ld) }
+				if n3 > 0 { bag.PutBack(bufR[:n3]) }
+				tm2 += float64(my2); tm22 += float64(my2 * my2); to2 += float64(o2); to22 += float64(o2 * o2)
+			}
 			bag.PutBack(bufO[:ko]); bag.PutBack(bufM[:km])
 			so += o; so2 += o * o; sm += mm; sm2 += mm * mm
 		}
 		n := float64(S); eo, em := so/n, sm/n
-		out.Cands = append(out.Cands, Cand{D: cd.d, EO: eo, EM: em, SO: math.Sqrt(math.Max(so2/n-eo*eo, 0)), SM: math.Sqrt(math.Max(sm2/n-em*em, 0))})
+		cand := Cand{D: cd.d, EO: eo, EM: em, SO: math.Sqrt(math.Max(so2/n-eo*eo, 0)), SM: math.Sqrt(math.Max(sm2/n-em*em, 0))}
+		if h2 {
+			a, b := tm2/n, to2/n
+			cand.H2 = &Two{EM2: a, EO2: b, SM2: math.Sqrt(math.Max(tm22/n-a*a, 0)), SO2: math.Sqrt(math.Max(to22/n-b*b, 0))}
+		}
+		out.Cands = append(out.Cands, cand)
 	}
 	return out
 }
@@ -134,6 +229,7 @@ func main() {
 	gd, err := kwg.GetKWG(cfg.WGLConfig(), lexName)
 	if err != nil { panic(err) }
 	K, S, W := envI("K", 16), envI("S", 256), envI("WORKERS", 8)
+	h2, check = os.Getenv("H2") == "1", os.Getenv("CHECK") == "1"
 	in := make(chan In, 1024); outc := make(chan Out, 1024); var wg sync.WaitGroup
 	for w := 0; w < W; w++ { wg.Add(1); go func() { defer wg.Done(); for x := range in { outc <- label(cfg, gd, x, K, S) } }() }
 	go func() { wg.Wait(); close(outc) }()
@@ -145,4 +241,8 @@ func main() {
 	bw := bufio.NewWriterSize(os.Stdout, 1<<20); enc := json.NewEncoder(bw)
 	for o := range outc { enc.Encode(o); bw.Flush() }   // flush per position: live callers (play_eval PLAN=exact) wait for each answer
 	bw.Flush()
+	if check {
+		f := func(x int64) string { return strconv.FormatInt(x, 10) }
+		os.Stderr.WriteString("CHECK one-turn (shadow vs full): " + f(nB1) + " of " + f(nB1Check) + "; two-turn: shadow vs full " + f(nShadow) + ", incremental vs scratch " + f(nIncr) + " of " + f(nCheck) + "\n")
+	}
 }

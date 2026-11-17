@@ -1,9 +1,10 @@
 """Sample positions for the planning benchmark and write them as CGP lines for go/lexmem_plan; merge its labels back.
   sample: python prep/plan_positions.py sample spf_0 200000 data/plan_in.jsonl   (positions with the mover to play, any phase)
-  merge : python prep/plan_positions.py merge  spf_0 data/plan_in.jsonl data/plan_out.jsonl TAG -> data/plan_{TAG}.pkl
+  merge : python prep/plan_positions.py merge  spf_0 data/plan_in.jsonl data/plan_out.jsonl TAG -> data/plan_{TAG}.pkl  [ORDER_REF=data/plan_v1.pkl]
 The pickle holds one dict per position: the position fields (board, blanks, rack, unseen, scores, bag, turn, mover, gi) and
-cands = [(desc, score, E_opp, E_my, sd_opp, sd_my)] with desc = (0, r, c, d, L, widx, score, blanks)."""
-import sys, json, random, pickle, types
+cands = [(desc, score, E_opp, E_my, sd_opp, sd_my)] with desc = (0, r, c, d, L, widx, score, blanks); labels made with H2=1 append the
+two-turn fields (E_my2, E_opp2, sd_my2, sd_opp2)."""
+import os, sys, json, random, pickle, types
 from lexmem.harness import HastyBot
 cgp_of = lambda r: HastyBot.cgp(types.SimpleNamespace(lexicon="NWL23"), r["board"], r["blanks"], r["rack"], r["scores"], 0)
 mode, src = sys.argv[1], sys.argv[2]
@@ -21,6 +22,10 @@ else:
         o = json.loads(line)
         if o.get("err") or not o.get("cands"): bad += 1; continue
         gi, ti = o["id"]; r = dict(games[gi][0][ti]); r["gi"] = gi
-        r["cands"] = [(tuple(c["d"]), c["d"][6], c["eo"], c["em"], c["so"], c["sm"]) for c in o["cands"]]
+        r["cands"] = [(tuple(c["d"]), c["d"][6], c["eo"], c["em"], c["so"], c["sm"]) + ((c["h2"]["em2"], c["h2"]["eo2"], c["h2"]["sm2"], c["h2"]["so2"]) if "h2" in c else ())
+                      for c in o["cands"]]
         res.append(r)
+    if os.environ.get("ORDER_REF"):   # same record order as an earlier labelling of these positions (held-out / training subsets are by index)
+        ref = [(r["gi"], r["turn"]) for r in pickle.load(open(os.environ["ORDER_REF"], "rb"))]; byk = {(r["gi"], r["turn"]): r for r in res}
+        res = [byk[k] for k in ref if k in byk]; print(f"ordered as {os.environ['ORDER_REF']}: {len(res)} of {len(ref)} positions matched")
     pickle.dump(res, open(f"data/plan_{tag}.pkl", "wb")); print(f"{len(res)} labelled positions ({bad} failed) -> data/plan_{tag}.pkl")
