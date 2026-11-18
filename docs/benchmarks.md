@@ -407,3 +407,27 @@ so inference runs (it was silently skipped before: a bare CGP has no history).
 The proxy is not BestBot strength: our teacher beats it, and Macondo's stopping rule ended most of its searches well before
 60 s (runs took 1.2–1.9 h). Read as "against a teacher-level bot". The net-alone run's per-game spreads were overwritten by
 the hybrid run (same output name), so only its summary is kept.
+
+**Stage-1 gate: does search over the net improve on the net?** Whole games in Go (`go/lexmem_search`, `lumi/search_eval.sh`)
+against HastyBot, 2000 games per row on seeds 777000 + g (we move first in even g), net `policy_simsoft_exch_nolex` served
+on one GCD. "Handoff" = SIMMING_BOT 10 s once bag + opponent rack ≤ 14 tiles (the last 7 bag tiles). Search: the policy's
+top K = 8 moves, each played out in the same S = 32 sampled worlds (bag shuffle + opponent rack), D = 2 further half-moves
+by net argmax over the 64 highest-scoring moves; the leaf is Macondo's win-probability table at the leaf spread, with the
+last mover's leave value (`mac`) or our value head's 4-ply spread prediction (`net`) added. Z = 1: a candidate replaces
+the policy's top move only if its mean paired gain over the 32 worlds exceeds one standard error. Paired = mean per-game
+win difference against the hybrid over the same seeds. Pass criterion: ≥ +3 points over the hybrid.
+
+| Our side | Win rate | Mean spread | vs hybrid, paired |
+|---|---|---|---|
+| Net alone | 51.8 % ± 1.1 | +4.0 | −4.7 ± 0.7 |
+| Net + handoff (hybrid) | 56.5 % ± 1.1 | +10.0 | — |
+| Search, `mac` leaf + handoff | 57.1 % ± 1.1 | +10.0 | +0.6 ± 1.4 |
+| Search, `mac` leaf, Z = 1 + handoff | 58.3 % ± 1.1 | +11.3 | +1.8 ± 1.2 |
+| Search, `net` leaf + handoff | 57.6 % ± 1.1 | +5.8 | +1.1 ± 1.4 |
+| SIMMING_BOT 10 s, whole game (teacher; 1000 games) | 60.7 % ± 1.5 | +17.7 | +6.6 ± 2.0 |
+
+The gate fails: no search variant reaches +3. The net-alone row matches the Python harness (52.4 %), so the Go harness
+reproduces our earlier evaluations; the teacher is 1.9 points below its Python-harness 62.6 %. The `net`-leaf search
+trades spread for wins as a win-probability objective should (losses by < 30 points 9.4 % → 6.6 % of games, losses by
+> 100 points 12.8 % → 15.0 %), but its net gain is within noise. Cost: 1.5–1.75 GCD-hours per 2000 search games at
+1700–2300 positions/s.

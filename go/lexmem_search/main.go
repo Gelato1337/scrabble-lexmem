@@ -16,7 +16,7 @@
 // bin/lexmem_bot processes (each its own GOMEMLIMIT, like the Python harness), fed a CGP with only the mover's rack.
 //
 // Env: SOCK LEXWORDS MACONDO NGAMES SEED CONC BATCH OUT EXCH OURS OURS_SECS OPP OPP_SECS HANDOFF EG_SECS NBOT
-//      K S D LEAF PM Z REC
+//      K S D LEAF PM Z REC PAR (max playouts in flight, default 4096)
 // Game g (0-based): seed SEED+g; our side moves first when g is even. Output: one JSON line per game.
 package main
 
@@ -334,6 +334,7 @@ var (
 	rules   *game.GameRules
 	winpcts [][]float32
 	leaves  *equity.CombinedStaticCalculator
+	playSem chan struct{}
 	exchOK  bool
 	cl      *Client
 	pool    chan *BotProc
@@ -572,10 +573,11 @@ func (s *Search) choose(g *game.Game, p *Pos, logits []float32, me, turn int, rn
 	var wg sync.WaitGroup
 	for ci := range cands {
 		for si := range seeds {
+			playSem <- struct{}{} // global cap on playouts in flight (PAR): memory grows with them, GPU throughput does not
 			gc := g.Copy()
 			wg.Add(1)
 			go func(ci, si int, gc *game.Game) {
-				defer wg.Done()
+				defer func() { <-playSem; wg.Done() }()
 				vals[ci*s.S+si] = s.playout(gc, p.Tokens[cands[ci]].Mv, me, turn, seeds[si])
 			}(ci, si, gc)
 		}
@@ -752,6 +754,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	playSem = make(chan struct{}, envI("PAR", 4096))
 	needNet := st.Ours == "net" || st.Ours == "search"
 	if needNet {
 		cl = NewClient(os.Getenv("SOCK"), envI("BATCH", 512))
