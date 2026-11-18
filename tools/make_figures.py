@@ -198,3 +198,24 @@ for k, (ax, yl, ttl) in enumerate(((axes[0], "within-position R² of E_opp", "ra
 axes[0].legend(frameon=False, fontsize=9, loc="upper left")
 fig.suptitle("Two-turn planning benchmark (opponent's reply, my answer, opponent again; top-score regret 10.7)", x=0.01, ha="left", fontsize=10.5)
 save(fig, "lexplan_two_turn")
+
+# 12. capacity-matched test: every net trains its query encoder (memory 6.44M, no memory 6.37M trainable), no cross-checks;
+# one turn = NWL planning benchmark, round-2 labels; two turns = fixed labels, PV2; 3000 held-out positions; dots = seeds 0, 1
+cm = ((("one turn (NWL, PV)", "critical-position regret (points)"),
+       {"no memory, encoder trained from scratch": (S3, [[4.19, 4.51], [4.35, 4.25], [3.74, 3.94]]),
+        "no memory, pretrained encoder trained": (S2, [[4.2, 4.49], [4.65, 4.64], [3.66, 4.57]]),
+        "lexicon memory, pretrained encoder trained": (S1, [[4.06, 4.03], [4.46, 4.34], [4.12, 3.78]])}),
+      (("two turns (PV2)", "critical-position regret on PV2 (points)"),
+       {"no memory, encoder trained from scratch": (S3, [[4.21, 4.39], [3.88, 4.31], [3.49, 3.63]]),
+        "lexicon memory, pretrained encoder trained": (S1, [[3.61, 3.87], [3.95, 4.12], [3.17, 3.11]])}))
+fig, axes = plt.subplots(1, 2, figsize=(10, 3.8))
+for ax, ((ttl, yl), arms) in zip(axes, cm):
+    for name, (col, vals) in arms.items():
+        dx = {S3: 0.95, S2: 1.0, S1: 1.05}[col]
+        ax.plot([n * dx for n in N], [sum(v) / 2 for v in vals], color=col, lw=2, marker="o", ms=5, label=name)
+        for n, v in zip(N, vals): ax.scatter([n * dx] * 2, v, color=col, s=12, alpha=0.5, zorder=3)
+    ax.set_xscale("log"); ax.set_xticks(N); ax.set_xticklabels(["3k", "10k", "270k"]); ax.set_xlabel("training positions")
+    ax.set_ylabel(yl); ax.set_title(ttl, loc="left", fontsize=10)
+axes[0].legend(frameon=False, fontsize=8, loc="lower left")
+fig.suptitle("Capacity-matched: all nets train their query encoder, no cross-checks (top-score regret 10.5 / 10.7)", x=0.01, ha="left", fontsize=10.5)
+save(fig, "lexplan_capacity_matched")

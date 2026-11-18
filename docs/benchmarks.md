@@ -336,3 +336,57 @@ on), seeds 0–1:
 Same shape as one turn: a clear memory advantage at 3k–10k (critical regret −1.0 and −0.8, both seeds), converging by 270k
 (−0.14). Neither arm learns the opponent's second reply below 270k positions. Against the frozen-encoder control only; the clean
 control was not run on two turns.
+
+## Round 4 (2026-11-18): capacity-matched memory test
+
+`QINIT=fut_train`: the query encoder starts from the future-word model (as in round 2) and is **trained** with the planner, so
+the memory arm has the same trainable capacity as the clean control (6.44M vs 6.37M parameters). Three arms, all without
+cross-checks, seeds 0–1:
+- **clean**: no memory, encoder trained from scratch (`QINIT=random`, round 3);
+- **same start**: no memory, pretrained encoder trained (`QINIT=fut_train ARM=nolex`);
+- **memory**: lexicon memory, pretrained encoder trained (`QINIT=fut_train ARM=lex`).
+
+One turn on the round-2 labels (as the clean-control rows of round 3; 743 critical positions), zero-shot on CSW, and on the
+dictionary-sensitive CSW subset (`SENS_REF`):
+
+| Eval | Training positions | R² E_opp within: clean / same start / memory | Regret all | Regret critical |
+|---|---|---|---|---|
+| NWL | 3k | 0.034 / 0.035 / **0.197** | 1.80 / 1.79 / **1.72** | 4.35 / 4.35 / **4.05** |
+| NWL | 10k | 0.095 / −0.091 / **0.183** | **1.74** / 1.90 / 1.83 | **4.30** / 4.65 / 4.40 |
+| NWL | 270k | **0.283** / 0.188 / 0.254 | **1.60** / 1.75 / 1.66 | **3.84** / 4.12 / 3.95 |
+| CSW zero-shot | 3k | 0.038 / 0.044 / **0.199** | 1.94 / 1.93 / **1.82** | 4.70 / 4.65 / **4.27** |
+| CSW zero-shot | 10k | 0.097 / −0.067 / **0.180** | **1.86** / 2.05 / 1.94 | **4.62** / 4.99 / 4.66 |
+| CSW zero-shot | 270k | **0.260** / 0.170 / 0.253 | **1.66** / 1.81 / 1.74 | **3.99** / 4.31 / 4.13 |
+| CSW dictionary-sensitive | 3k | 0.051 / 0.059 / **0.217** | 2.00 / 1.99 / **1.75** | 5.20 / 4.95 / **4.42** |
+| CSW dictionary-sensitive | 10k | 0.103 / −0.048 / **0.200** | 2.02 / 2.22 / **1.99** | 5.24 / 5.61 / **5.02** |
+| CSW dictionary-sensitive | 270k | 0.260 / 0.180 / **0.285** | **1.66** / 1.71 / 1.86 | **4.29** / 4.36 / 4.72 |
+
+Critical regret per seed (NWL): clean 4.19/4.51, 4.35/4.25, 3.74/3.94; same start 4.20/4.49, 4.65/4.64, 3.66/4.57; memory
+4.06/4.03, 4.46/4.34, 4.12/3.78.
+
+- With the same start and capacity, the memory arm decides better at every size (critical regret −0.30 / −0.25 / −0.17 NWL).
+- Without memory the pretrained encoder is a handicap at 10k–270k: the same-start control is worse than the clean control by
+  0.35 / 0.28. Against the best no-memory net (clean), the memory arm wins only at 3k (−0.30 NWL, both seeds; −0.43 CSW; −0.78 on
+  dictionary-sensitive positions) and is behind at 10k (+0.10) and 270k (+0.11 NWL, +0.43 on dictionary-sensitive CSW, both seeds).
+- Training the encoder helps the memory arm: frozen (round 3, no cross-checks) 4.48 / 4.45 / 4.15 → trained 4.05 / 4.40 / 3.95.
+- 10k caveat: every arm is still improving at its last evaluation (step 8000 of the round-2 budget). Both pretrained-encoder arms reach
+  lower regret at 3k (4000 steps) than at 10k; the clean arm does not. The 10k comparison depends on the step budget.
+
+**Two turns, trainable encoders** (fixed labels, PV2, 757 critical positions; no cross-checks). The same-start control was not run on
+two turns:
+
+| Training positions | Arm | R² within: E_opp / E_my2 / E_opp2 | Regret all (PV2) | Regret critical (PV2), seeds 0 / 1 |
+|---|---|---|---|---|
+| 3k | clean | 0.052 / 0.512 / 0.049 | 1.88 | 4.30 (4.21 / 4.39) |
+| 3k | memory | **0.268 / 0.553** / 0.036 | **1.67** | **3.74** (3.61 / 3.87) |
+| 10k | clean | 0.107 / **0.553 / 0.054** | **1.75** | 4.10 (3.88 / 4.31) |
+| 10k | memory | **0.176** / 0.494 / −0.055 | 1.81 | **4.04** (3.95 / 4.12) |
+| 270k | clean | 0.220 / 0.601 / 0.118 | 1.58 | 3.56 (3.49 / 3.63) |
+| 270k | memory | **0.325 / 0.629 / 0.166** | **1.41** | **3.14** (3.17 / 3.11) |
+| — | top-score baseline | | 3.32 | 10.73 |
+
+The memory arm is better at 3k (−0.56) and at 270k (−0.42), both seeds, and tied at 10k. At 270k it is the best two-turn net so far
+(frozen encoder with cross-checks, round 3: memory 3.27, control 3.41) and the first full-data decision gain for the memory. It is
+not isolated yet. On one turn the pretrained start alone did not help a no-memory net. On two turns, though, the frozen pretrained
+control with cross-checks (3.41) beats the clean control (3.56), so the pretrained start may help without memory here. The
+same-start two-turn control (`HORIZON=2 QINIT=fut_train ARM=nolex`) settles it.

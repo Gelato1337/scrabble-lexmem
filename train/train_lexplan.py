@@ -8,8 +8,8 @@ decision accuracy and regret vs the exact PV answer, for all positions and for p
 top-scoring move by >= CRIT points), against the no-planning baseline (always the top-scoring move); by phase.
 Eval only: EVAL_CKPTS=a.pt,b.pt (weights from another dictionary load fine; word keys are rebuilt for LEXICON); SENS_REF=<labels of the
 same positions under another dictionary> adds a report on the quarter of positions whose labels moved most.
-QINIT=random: the query encoder starts fresh and is trained (a control with no dictionary-trained part; default: from the future-word
-model, frozen). HORIZON=2 (labels from go/lexmem_plan H2=1): three outputs E_opp, E_my2, E_opp2 and the two-turn planning value
+QINIT: fut (default) = query encoder from the future-word model, frozen; fut_train = same start, trained; random = fresh and trained
+(a control with no dictionary-trained part). HORIZON=2 (labels from go/lexmem_plan H2=1): three outputs E_opp, E_my2, E_opp2 and the two-turn planning value
 PV2 = score - E_opp + E_my2 - E_opp2.
 Usage: ARM=lex MAX_TRAIN=50000 STEPS=20000 SEED=0 TAG=lexplan_lex_50k python train/train_lexplan.py"""
 import os, sys, time, math, pickle, random, importlib.util, numpy as np, torch, torch.nn.functional as F
@@ -74,10 +74,11 @@ def coll(items):
 
 model = tlv.LexValue().to(dev)
 sd = torch.load(E("INIT_FUT", "data/future_R1.pt"), map_location=dev)
+assert QINIT in ("fut", "fut_train", "random")
+if QINIT != "random": model.qenc.load_state_dict({k[5:]: v for k, v in sd.items() if k.startswith("qenc.")})
 if QINIT == "fut":
-    model.qenc.load_state_dict({k[5:]: v for k, v in sd.items() if k.startswith("qenc.")})
     for p in model.qenc.parameters(): p.requires_grad_(False)
-print(f"query encoder: {'future-word model, frozen' if QINIT == 'fut' else 'fresh, trained'}; horizon {2 if H2 else 1}", flush=True)
+print(f"query encoder: {dict(fut='future-word model, frozen', fut_train='future-word model, trained', random='fresh, trained')[QINIT]}; horizon {2 if H2 else 1}", flush=True)
 if tlv.LEXARM:
     model.wenc.load_state_dict({k[5:]: v for k, v in sd.items() if k.startswith("wenc.") and not k.startswith("wenc.slot") and k not in ("wenc.POS", "wenc.LEN")}, strict=False)
     model.refresh_keys()

@@ -284,6 +284,18 @@ control.)
 
 ![Two-turn planning](docs/figures/lexplan_two_turn.png)
 
+### 15. Capacity-matched: memory helps at small data and on two turns at full data (Nov 18)
+The memory arm now trains its pretrained query encoder too (6.44M trainable parameters vs 6.37M for the clean control; no
+cross-checks anywhere). On one turn, with the same start and capacity, memory decides better at every size (critical regret 4.05 vs
+4.35 at 3k, 3.95 vs 4.12 at 270k). However, the pretrained encoder is a handicap for a no-memory net, and against the best
+no-memory net (encoder from scratch) the memory arm wins only at 3k (4.05 vs 4.35, both seeds; 4.42 vs 5.20 on
+dictionary-sensitive CSW positions). At 10k and 270k it is 0.1 points behind. On two turns the memory arm is better at 3k (3.74 vs
+4.30) and at **270k (3.14 vs 3.56, both seeds)**, the first full-data decision gain for the memory and the best two-turn net so far.
+Open control: a two-turn no-memory net with the same pretrained, trainable encoder. Details:
+[docs/benchmarks.md](docs/benchmarks.md#round-4-2026-11-18-capacity-matched-memory-test).
+
+![Capacity-matched test](docs/figures/lexplan_capacity_matched.png)
+
 ## Repository layout
 
 | Folder | Contents |
@@ -362,6 +374,8 @@ python prep/plan_positions.py sample spf_0 300000 data/plan_in.jsonl
 python prep/plan_positions.py merge spf_0 data/plan_in.jsonl data/plan_out.jsonl v1          # -> data/plan_v1.pkl
 # lex vs no-lex at a fixed training size (query encoder frozen in both arms); NO_XCHK=1 removes the cross-check letters
 ARM=lex SEED=0 MAX_TRAIN=3000 STEPS=4000 B=64 NEV_POS=3000 HOLDOUT_MOD=10 TAG=lexplan_lex_3000_s0 python train/train_lexplan.py
+# query encoder: QINIT=fut (pretrained, frozen; default) | fut_train (pretrained, trained) | random (fresh, trained)
+# two-turn labels (lexmem_plan H2=1, merged in plan_v1 order with ORDER_REF=data/plan_v1.pkl): HORIZON=2 DATA=data/plan_h2.pkl
 # eval only, another dictionary (word keys rebuilt from the frozen letter encoder), plus the dictionary-sensitive quarter
 ARM=lex DATA=data/plan_csw.pkl LEXICON=data/CSW24.txt SENS_REF=data/plan_v1.pkl EVAL_CKPTS=data/lexplan_lex_3000_s0.pt NEV_POS=3000 HOLDOUT_MOD=10 python train/train_lexplan.py
 # planning policies in games: PLAN=net (PLAN_ARM, PLAN_CKPT) | exact | topscore
