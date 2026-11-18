@@ -390,3 +390,20 @@ The memory arm is better at 3k (−0.56) and at 270k (−0.42), both seeds, and 
 not isolated yet. On one turn the pretrained start alone did not help a no-memory net. On two turns, though, the frozen pretrained
 control with cross-checks (3.41) beats the clean control (3.56), so the pretrained start may help without memory here. The
 same-start two-turn control (`HORIZON=2 QINIT=fut_train ARM=nolex`) settles it.
+
+## Round 5 (2026-11-18): search-based self-play
+
+**Baseline against a BestBot proxy.** Macondo's `SIMMING_INFER_BOT` (simulation + rack inference + pre-endgame and endgame
+solvers), at most 60 s per move, 2 sim threads, 1000 games per row, seeds 777000. Rack inference reads the opponent's last
+move from the game history; the bot wrapper now rebuilds the position as (position before our last tile play) + that play,
+so inference runs (it was silently skipped before: a bare CGP has no history).
+
+| Our side | Win rate vs the proxy |
+|---|---|
+| Net alone (`simsoft_scratch_nolex`) | 42.5 % ± 1.6 |
+| Net + SIMMING_BOT 10 s for the last 7 bag tiles | 47.4 % ± 1.6 |
+| SIMMING_BOT 10 s (our teacher) | 51.8 % ± 1.6 |
+
+The proxy is not BestBot strength: our teacher beats it, and Macondo's stopping rule ended most of its searches well before
+60 s (runs took 1.2–1.9 h). Read as "against a teacher-level bot". The net-alone run's per-game spreads were overwritten by
+the hybrid run (same output name), so only its summary is kept.

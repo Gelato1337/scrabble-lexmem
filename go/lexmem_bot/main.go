@@ -1,6 +1,11 @@
 // lexmem_bot: one Macondo bot per process for scrabble-lexmem evaluations.
 // stdin, one request per line:  <BOTCODE> <seconds> <cgp...>     e.g.  SIMMING_BOT 15 15/15/... RACK/ 0/0 0 lex NWL23;
 // stdout, one line per request: MOVE <ShortDescription>           e.g.  MOVE  8D WORD | MOVE (exch AB) | MOVE (Pass) | ERR <msg>
+// Optional opponent history for rack inference (SIMMING_INFER_BOT reads the game history; a bare CGP has none):
+//   <cgp> TAB <cgp before the opponent's last tile play: opponent on turn, its rack = the tiles it played / our rack>
+//         TAB <coords> TAB <tiles ('.' = played through, lowercase = blank)> TAB <the played tiles as a rack>
+// The position is then rebuilt as that CGP + the opponent's play (one history event) and checked against <cgp>.
+// BOT_LOG=info prints Macondo's log (inference lines) to stderr; every history use prints HIST ok / HIST err.
 package main
 
 import (
@@ -53,6 +58,9 @@ func simCands(tp *bot.BotTurnPlayer) (out string) {
 
 func main() {
 	zerolog.SetGlobalLevel(zerolog.ErrorLevel)
+	if os.Getenv("BOT_LOG") == "info" {
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	}
 	ex, _ := os.Executable()
 	cfg := &config.Config{}
 	cfg.Load(os.Args[1:])
@@ -80,7 +88,46 @@ func main() {
 	}
 }
 
+// withHistory: the current position rebuilt as (position before the opponent's last play) + that play, so that the game
+// history holds the opponent's move; nil if anything does not match the current position cur.
+func withHistory(cfg *config.Config, cur *game.Game, h []string) (*game.Game, error) {
+	pg, err := cgp.ParseCGP(cfg, h[0])
+	if err != nil {
+		return nil, err
+	}
+	g2 := pg.Game
+	g2.RecalculateBoard()
+	g2.SetBackupMode(game.InteractiveGameplayMode)
+	g2.SetStateStackLength(1)
+	m, err := g2.CreateAndScorePlacementMove(h[1], h[2], h[3], false)
+	if err != nil {
+		return nil, err
+	}
+	opp := g2.PlayerOnTurn()
+	if err := g2.PlayMove(m, true, 0); err != nil {
+		return nil, err
+	}
+	g2.ThrowRacksInFor(opp) // the opponent's refill is unknown to us: back into the bag, as in a bare CGP
+	me := g2.PlayerOnTurn()
+	if g2.PointsFor(me) != cur.PointsFor(cur.PlayerOnTurn()) || g2.PointsFor(opp) != cur.PointsFor(1-cur.PlayerOnTurn()) {
+		return nil, fmt.Errorf("scores %d/%d vs %d/%d", g2.PointsFor(me), g2.PointsFor(opp), cur.PointsFor(cur.PlayerOnTurn()), cur.PointsFor(1-cur.PlayerOnTurn()))
+	}
+	if g2.RackFor(me).String() != cur.RackFor(cur.PlayerOnTurn()).String() || g2.Bag().TilesRemaining() != cur.Bag().TilesRemaining() {
+		return nil, fmt.Errorf("rack or bag differs")
+	}
+	for r := 0; r < 15; r++ {
+		for c := 0; c < 15; c++ {
+			if g2.Board().GetLetter(r, c) != cur.Board().GetLetter(r, c) {
+				return nil, fmt.Errorf("board differs at %d,%d", r, c)
+			}
+		}
+	}
+	return g2, nil
+}
+
 func best(cfg *config.Config, code, secs, cgpStr string, threads int) (res string, rerr error) {
+	parts := strings.Split(cgpStr, "\t")
+	cgpStr = parts[0]
 	bc, ok := pb.BotRequest_BotCode_value[code]
 	if !ok {
 		return "", fmt.Errorf("unknown bot code %s", code)
@@ -96,7 +143,16 @@ func best(cfg *config.Config, code, secs, cgpStr string, threads int) (res strin
 	g.RecalculateBoard()
 	g.SetBackupMode(game.InteractiveGameplayMode)
 	g.SetStateStackLength(1)
-	tp, err := bot.NewBotTurnPlayerFromGame(g.Game, &bot.BotConfig{Config: *cfg, SimThreads: threads}, pb.BotRequest_BotCode(bc))
+	gm := g.Game
+	if len(parts) == 5 {
+		if g2, err := withHistory(cfg, gm, parts[1:]); err == nil {
+			gm = g2
+			fmt.Fprintln(os.Stderr, "HIST ok")
+		} else {
+			fmt.Fprintf(os.Stderr, "HIST err %v\n", err)
+		}
+	}
+	tp, err := bot.NewBotTurnPlayerFromGame(gm, &bot.BotConfig{Config: *cfg, SimThreads: threads}, pb.BotRequest_BotCode(bc))
 	if err != nil {
 		return "", err
 	}

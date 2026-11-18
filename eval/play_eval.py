@@ -6,7 +6,7 @@ NG = int(sys.argv[1]); SEED0 = int(sys.argv[2]) if len(sys.argv) > 2 else 10000
 CKPT = os.environ.get("CKPT", "data/policy_imit_nolex.pt"); USE_LEX = os.environ.get("USE_LEX", "0") == "1"
 LEXICON = os.environ.get("LEXICON", "data/NWL23.txt"); NPROC = int(os.environ.get("NPROC", 8)); RETR = os.environ.get("RETR", "")
 SEARCH = os.environ.get("SEARCH", "0") == "1"; SIM = os.environ.get("SIM", "0") == "1"; ROLLOUT = os.environ.get("ROLLOUT", "net"); CAND = os.environ.get("CAND", "net"); S2 = int(os.environ.get("S2", 0)); VSEARCH = os.environ.get("VSEARCH", "0") == "1"; VCKPT = os.environ.get("VCKPT", ""); VLEX = os.environ.get("VLEX", "0") == "1"; HVAL = os.environ.get("HVAL", "0") == "1"; K = int(os.environ.get("K", 6)); S = int(os.environ.get("S", 6)); TAGE = os.environ.get("TAGE", ""); MIX = float(os.environ.get("MIX", 0))
-OPP = os.environ.get("OPP", "hasty"); OPP_SECS = float(os.environ.get("OPP_SECS", 10))   # hasty = Macondo shell; else a BotRequest code via bin/lexmem_bot
+OPP = os.environ.get("OPP", "hasty"); OPP_SECS = float(os.environ.get("OPP_SECS", 10))   # hasty = Macondo shell; else a BotRequest code via bin/lexmem_bot; OPP_THREADS sim threads (on the worker's 2 cores)
 ENDGAME = int(os.environ.get("ENDGAME", 0)); EG_SECS = float(os.environ.get("EG_SECS", 10))   # 1: bag empty -> Macondo solver; 2: also 1 tile in the bag
 OURS = os.environ.get("OURS", ""); OURS_SECS = float(os.environ.get("OURS_SECS", 10))   # a Macondo bot code plays our side instead of the net
 PLAN = os.environ.get("PLAN", "")   # planning policies: "net" (PLAN_CKPT + PLAN_ARM), "exact" (go/lexmem_plan live), "topscore"
@@ -28,7 +28,7 @@ def init():
     lex = Lexicon(LEXICON); model = PolicyNet(lex, use_lex=USE_LEX)
     load_shapes(model, CKPT); model.eval()
     if USE_LEX: model.refresh_keys()
-    G.update(lex=lex, model=model, helper=MoveDataset(lex, [], use_lex=USE_LEX, exch=os.environ.get("EXCH", "0") == "1"), hasty=HastyBot(lexicon=MLEX) if OPP == "hasty" else MacondoBot(OPP, OPP_SECS, lexicon=MLEX, cpus=bot_cpus()))
+    G.update(lex=lex, model=model, helper=MoveDataset(lex, [], use_lex=USE_LEX, exch=os.environ.get("EXCH", "0") == "1"), hasty=HastyBot(lexicon=MLEX) if OPP == "hasty" else MacondoBot(OPP, OPP_SECS, lexicon=MLEX, threads=int(os.environ.get("OPP_THREADS", 1)), cpus=bot_cpus()))
     if OURS: G["ours"] = MacondoBot(OURS, OURS_SECS, cpus=bot_cpus())
     if PLAN == "net":   # the planning benchmark's afterstate net (train/train_lexplan.py): predicts E_opp, E_my per candidate
         import importlib.util
