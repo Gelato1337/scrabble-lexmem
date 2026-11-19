@@ -16,7 +16,7 @@
 // bin/lexmem_bot processes (each its own GOMEMLIMIT, like the Python harness), fed a CGP with only the mover's rack.
 //
 // Env: SOCK LEXWORDS MACONDO NGAMES SEED CONC BATCH OUT EXCH OURS OURS_SECS OPP OPP_SECS HANDOFF EG_SECS NBOT
-//      K S D LEAF PM Z REC PAR (max playouts in flight, default 4096)
+//      K S D LEAF PM Z REC PAR (max playouts in flight, default 4096) POSITIONS NPOS (positions mode, see runPositions)
 // Game g (0-based): seed SEED+g; our side moves first when g is even. Output: one JSON line per game.
 package main
 
@@ -44,6 +44,7 @@ import (
 
 	"github.com/domino14/macondo/ai/bot"
 	"github.com/domino14/macondo/board"
+	"github.com/domino14/macondo/cgp"
 	"github.com/domino14/macondo/config"
 	"github.com/domino14/macondo/equity"
 	"github.com/domino14/macondo/game"
@@ -549,8 +550,8 @@ func (s *Search) playout(gc *game.Game, cand *move.Move, me, turn int, sd [32]by
 	return 1 - w
 }
 
-// choose among the policy's top K by the mean playout value over S shared worlds; returns token index, candidates, estimates
-func (s *Search) choose(g *game.Game, p *Pos, logits []float32, me, turn int, rng *rand.Rand) (int, []int, []float64) {
+// playout values of the policy's top K moves (token indices, by logit) in the same S worlds: vals[ci*S + si]; nil if K = 1
+func (s *Search) evalCands(g *game.Game, p *Pos, logits []float32, me, turn int, rng *rand.Rand) ([]int, []float64) {
 	idx := make([]int, len(logits))
 	for i := range idx {
 		idx[i] = i
@@ -562,7 +563,7 @@ func (s *Search) choose(g *game.Game, p *Pos, logits []float32, me, turn int, rn
 	}
 	cands := idx[:k]
 	if k == 1 {
-		return cands[0], cands, []float64{1}
+		return cands, nil
 	}
 	seeds := make([][32]byte, s.S)
 	for i := range seeds {
@@ -583,6 +584,16 @@ func (s *Search) choose(g *game.Game, p *Pos, logits []float32, me, turn int, rn
 		}
 	}
 	wg.Wait()
+	return cands, vals
+}
+
+// choose among the policy's top K by the mean playout value over S shared worlds; returns token index, candidates, estimates
+func (s *Search) choose(g *game.Game, p *Pos, logits []float32, me, turn int, rng *rand.Rand) (int, []int, []float64) {
+	cands, vals := s.evalCands(g, p, logits, me, turn, rng)
+	if vals == nil {
+		return cands[0], cands, []float64{1}
+	}
+	k := len(cands)
 	// a candidate replaces the policy's top move (ci = 0) only if its mean paired difference (same worlds) exceeds Z standard
 	// errors; among those, the highest mean. Z = 0: plain argmax of the mean.
 	est := make([]float64, k)
@@ -716,6 +727,102 @@ func playGame(g *game.Game, gen *movegen.GordonGenerator, st *Setup, gi int, see
 	return rec
 }
 
+// ---- positions mode (POSITIONS=file.jsonl with lines {"i", "cgp", "turn", ...}; other fields are ignored; NPOS = first N only):
+// for each position the policy's top K moves and their playout values in each of the S worlds (the same worlds for every
+// candidate; world seeds are drawn in sequence, so the first S' worlds of an S run are an S' run). A CGP leaves the opponent's
+// rack among the unseen tiles; a random one is dealt before the root tokens are built so the bag count matches the position
+// (each playout redeals it).
+type PosIn struct {
+	I    int    `json:"i"`
+	CGP  string `json:"cgp"`
+	Turn int    `json:"turn"`
+}
+type PosOut struct {
+	I      int         `json:"i"`
+	NTok   int         `json:"ntok"`
+	Cands  [][]int     `json:"c"` // Token.Desc of each candidate, highest logit first
+	Logits []float32   `json:"l"`
+	Vals   [][]float64 `json:"v"` // [candidate][world]: win probability of the player on turn (null if one candidate)
+}
+
+func runPositions(path string, s *Search, conc int, seed0 int64, enc *json.Encoder, mu *sync.Mutex) {
+	f, err := os.Open(path)
+	if err != nil {
+		panic(err)
+	}
+	var ps []PosIn
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 1<<24)
+	for sc.Scan() {
+		var p PosIn
+		if err := json.Unmarshal(sc.Bytes(), &p); err != nil {
+			panic(err)
+		}
+		ps = append(ps, p)
+	}
+	f.Close()
+	if n := envI("NPOS", 0); n > 0 && n < len(ps) {
+		ps = ps[:n]
+	}
+	jobs := make(chan PosIn, len(ps))
+	for _, p := range ps {
+		jobs <- p
+	}
+	close(jobs)
+	t0 := time.Now()
+	done := 0
+	var wg sync.WaitGroup
+	for w := 0; w < conc; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for pi := range jobs {
+				pg, err := cgp.ParseCGP(cfg, pi.CGP)
+				if err != nil {
+					panic(fmt.Sprintf("position %d: %v", pi.I, err))
+				}
+				pg.RecalculateBoard()
+				g := pg.Game
+				me := g.PlayerOnTurn()
+				var sd [32]byte
+				binary.LittleEndian.PutUint64(sd[:], uint64(seed0)+uint64(pi.I))
+				g.SeedBag(sd)
+				g.Bag().Shuffle()
+				if _, err := g.SetRandomRack(1-me, nil); err != nil {
+					panic(err)
+				}
+				p := tokensFor(g, newGen(g), pi.Turn, MAXM)
+				o := PosOut{I: pi.I, NTok: len(p.Tokens)}
+				if len(p.Tokens) > 0 {
+					rep := cl.Infer(p)
+					rng := rand.New(rand.NewSource((seed0+int64(pi.I))*7919 + 17))
+					cands, vals := s.evalCands(g, p, rep.Logits, me, pi.Turn, rng)
+					for ci, c := range cands {
+						o.Cands = append(o.Cands, p.Tokens[c].Desc)
+						o.Logits = append(o.Logits, rep.Logits[c])
+						if vals != nil {
+							row := make([]float64, s.S)
+							for si := range row {
+								row[si] = math.Round(vals[ci*s.S+si]*1e4) / 1e4
+							}
+							o.Vals = append(o.Vals, row)
+						}
+					}
+				}
+				mu.Lock()
+				enc.Encode(o)
+				done++
+				if done%50 == 0 {
+					fmt.Fprintf(os.Stderr, "%d/%d positions  %.0fs\n", done, len(ps), time.Since(t0).Seconds())
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	fmt.Printf("FINAL positions %d search=K%d,S%d,D%d,%s,PM%d: %.0fs\n", len(ps), s.K, s.S, s.D, s.Leaf, s.PM, time.Since(t0).Seconds())
+}
+
 func main() {
 	zerolog.SetGlobalLevel(zerolog.ErrorLevel)
 	ex, _ := os.Executable()
@@ -775,6 +882,12 @@ func main() {
 	enc := json.NewEncoder(bw)
 	var mu sync.Mutex
 	fmt.Fprintf(os.Stderr, "setup %+v search %+v exch %v games %d from seed %d\n", *st, *st.Srch, exchOK, ngames, seed0)
+	if pf := os.Getenv("POSITIONS"); pf != "" {
+		runPositions(pf, st.Srch, conc, seed0, enc, &mu)
+		bw.Flush()
+		out.Close()
+		return
+	}
 	jobs := make(chan int, ngames)
 	for i := 0; i < ngames; i++ {
 		jobs <- i

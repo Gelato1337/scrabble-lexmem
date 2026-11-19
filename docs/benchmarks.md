@@ -431,3 +431,27 @@ reproduces our earlier evaluations; the teacher is 1.9 points below its Python-h
 trades spread for wins as a win-probability objective should (losses by < 30 points 9.4 % → 6.6 % of games, losses by
 > 100 points 12.8 % → 15.0 %), but its net gain is within noise. Cost: 1.5–1.75 GCD-hours per 2000 search games at
 1700–2300 positions/s.
+
+**Position-level check: does the search approach the teacher with more worlds?** (`eval/search_positions.py`,
+`lexmem_search POSITIONS=...`) 1000 held-out positions of `simsoft_31` (one per game; teacher = SIMMING_BOT 10 s with its
+top-16 sim candidates and win %; positions where the teacher played tiles, bag ≥ 8, no openings), same net and search as the
+gate (K = 8, D = 2, PM = 64). One run per leaf with S = 512 (`mac`) or 256 (`net`) worlds; smaller S = the first S worlds.
+Agreement = the choice is the teacher's move; loss = the teacher's best win % minus the teacher's win % for the choice
+(win-% points, per move; choices outside its 16 candidates counted at its lowest: a lower bound). Policy top move:
+agreement 68.6 % ± 1.5, loss 0.32; the teacher's move is among the policy's top 8 in 95.3 %.
+
+| Search (Z = 1) | `mac` agreement | `mac` loss | `net` agreement | `net` loss |
+|---|---|---|---|---|
+| S = 32 | 70.1 % (+1.5 ± 1.1) | 0.25 | 67.9 % (−0.6 ± 1.2) | 0.34 |
+| S = 64 | 73.3 % (+4.7 ± 1.1) | 0.21 | 71.2 % (+2.7 ± 1.2) | 0.25 |
+| S = 128 | 75.4 % (+6.8 ± 1.2) | 0.19 | 71.5 % (+3.0 ± 1.2) | 0.25 |
+| S = 256 | 77.7 % (+9.1 ± 1.2) | 0.14 | 72.5 % (+4.0 ± 1.3) | 0.23 |
+| S = 512 | 81.1 % (+12.5 ± 1.2) | 0.13 | — | — |
+
+(± = paired against the policy's top move over the same positions.) With the `mac` leaf the search moves steadily towards
+the teacher: at S = 512 it switches away from the policy's top move in 22 % of positions, 147 times to the teacher's move
+and 22 times away from it, and removes 60 % of the policy's teacher-estimated loss. Z = 0 is worse at every S (at S = 32 it
+loses agreement with both leaves: −6.7 `mac`, −10.8 `net`): with few worlds the plain argmax follows noise. The `net` leaf
+gains less at every S. Caveat: the `mac` leaf uses the same leave values and win-% table as the teacher's own sim, so part
+of the agreement is a shared evaluator; agreement cannot show play beyond the teacher. Cost: 2.9 GCD-seconds per position
+at S = 512 (`mac`, 2820 positions/s).
