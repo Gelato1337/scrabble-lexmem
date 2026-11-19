@@ -17,7 +17,7 @@
 //
 // Env: SOCK LEXWORDS MACONDO NGAMES SEED CONC BATCH OUT EXCH OURS OURS_SECS OPP OPP_SECS HANDOFF EG_SECS NBOT
 //      K S D LEAF PM Z REC PAR (max playouts in flight, default 4096) POSITIONS NPOS (positions mode, see runPositions)
-// Game g (0-based): seed SEED+g; our side moves first when g is even. Output: one JSON line per game.
+// Game g (0-based, G0 .. G0+NGAMES-1): seed SEED+g; our side moves first when g is even. Output: one JSON line per game.
 package main
 
 import (
@@ -842,7 +842,7 @@ func main() {
 		Handoff: envI("HANDOFF", 0), EGSecs: envF("EG_SECS", 10), Rec: os.Getenv("REC") == "1",
 		Srch: &Search{K: envI("K", 8), S: envI("S", 32), D: envI("D", 2), PM: envI("PM", MAXM), Leaf: envS("LEAF", "mac"), Z: envF("Z", 0)}}
 	exchOK = os.Getenv("EXCH") != "0"
-	ngames, conc, seed0 := envI("NGAMES", 100), envI("CONC", 64), int64(envI("SEED", 777000))
+	ngames, conc, seed0, g0 := envI("NGAMES", 100), envI("CONC", 64), int64(envI("SEED", 777000)), envI("G0", 0)
 	gd, err = kwg.GetKWG(cfg.WGLConfig(), "NWL23")
 	if err != nil {
 		panic(err)
@@ -881,7 +881,7 @@ func main() {
 	bw := bufio.NewWriterSize(out, 1<<20)
 	enc := json.NewEncoder(bw)
 	var mu sync.Mutex
-	fmt.Fprintf(os.Stderr, "setup %+v search %+v exch %v games %d from seed %d\n", *st, *st.Srch, exchOK, ngames, seed0)
+	fmt.Fprintf(os.Stderr, "setup %+v search %+v exch %v games %d from game %d, seed %d\n", *st, *st.Srch, exchOK, ngames, g0, seed0)
 	if pf := os.Getenv("POSITIONS"); pf != "" {
 		runPositions(pf, st.Srch, conc, seed0, enc, &mu)
 		bw.Flush()
@@ -890,7 +890,7 @@ func main() {
 	}
 	jobs := make(chan int, ngames)
 	for i := 0; i < ngames; i++ {
-		jobs <- i
+		jobs <- g0 + i // game g always has seed SEED+g and the same first mover, so runs split by G0 pair with whole runs
 	}
 	close(jobs)
 	t0 := time.Now()

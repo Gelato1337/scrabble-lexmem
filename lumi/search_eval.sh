@@ -13,7 +13,7 @@ export PYTHONPATH=. SOCK=/tmp/lexmem_${SLURM_JOB_ID}.sock VHEAD=${VHEAD:-val}
 [ -n "$PRE" ] && { eval "$PRE" || exit 1; }
 python selfplay/server_infer.py > logs/search_server_${SLURM_JOB_ID}.log 2>&1 &
 SRV=$!
-for i in $(seq 120); do [ -S $SOCK ] && break; sleep 2; done
+for i in $(seq 300); do [ -S $SOCK ] && break; sleep 2; done   # up to 10 min: model load can be slow on a busy node
 [ -S $SOCK ] || { echo "server did not start"; cat logs/search_server_${SLURM_JOB_ID}.log; exit 1; }
 run() {   # $1 = tag, rest = env assignments
   local tag=$1; shift

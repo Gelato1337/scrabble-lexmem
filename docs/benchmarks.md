@@ -455,3 +455,17 @@ loses agreement with both leaves: −6.7 `mac`, −10.8 `net`): with few worlds 
 gains less at every S. Caveat: the `mac` leaf uses the same leave values and win-% table as the teacher's own sim, so part
 of the agreement is a shared evaluator; agreement cannot show play beyond the teacher. Cost: 2.9 GCD-seconds per position
 at S = 512 (`mac`, 2820 positions/s).
+
+**Stage-1 gate at S = 256** (the position check's recommendation): search `mac` leaf, Z = 1, S = 256, otherwise as in the
+gate table (K = 8, D = 2, PM = 64, handoff), vs HastyBot, the same 2000 seeds (four runs of 500 games, `G0` = 0 … 1500).
+
+| Our side | Win rate | Mean spread | vs hybrid, paired |
+|---|---|---|---|
+| Net + handoff (hybrid) | 56.5 % ± 1.1 | +10.0 | — |
+| Search S = 32, Z = 1 + handoff | 58.3 % ± 1.1 | +11.3 | +1.8 ± 1.2 |
+| **Search S = 256, Z = 1 + handoff** | **60.1 % ± 1.1** | **+16.5** | **+3.6 ± 1.3** |
+| SIMMING_BOT 10 s (teacher; games 0–999) | 60.7 % ± 1.5 | +17.7 | +6.6 ± 2.0 |
+
+The gate passes (+3.6 against the +3 criterion; the position check predicted about +3.7). On games 0–999 the search is
+−1.7 ± 1.7 against the teacher, within noise; S = 256 is +1.8 ± 1.3 over S = 32. The gain is larger when we move first
+(+5.2 ± 1.8) than second (+2.0 ± 1.9). Cost: about 2 GCD-hours per 500 games (1.4 s of search per move).

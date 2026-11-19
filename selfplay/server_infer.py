@@ -15,7 +15,7 @@ from lexmem.policy import PolicyNet, MF
 torch.backends.mha.set_fastpath_enabled(False)
 E = os.environ.get; dev = "cuda" if torch.cuda.is_available() else "cpu"
 lex = Lexicon(E("LEXICON", "data/NWL23.txt"))
-open("data/lexwords.txt", "w").write("\n".join(lex.words) + "\n")
+tmp = f"data/lexwords.txt.{E('SLURM_JOB_ID', os.getpid())}.{os.getpid()}"; open(tmp, "w").write("\n".join(lex.words) + "\n"); os.replace(tmp, "data/lexwords.txt")   # atomic: parallel jobs read it
 VHEAD = E("VHEAD", "td")
 model = PolicyNet(lex).to(dev); model.load_state_dict(torch.load(E("CKPT"), map_location=dev), strict=False); model.eval()
 print(f"model {E('CKPT')} on {dev}; {lex.NW} words; value head {VHEAD}", flush=True)
