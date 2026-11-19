@@ -7,6 +7,7 @@
 #SBATCH --output=logs/imitate_%x_%j.out
 source lumi/common.sh
 export MACONDO=/scratch/project_462001611/macondo PYTHONPATH=.
-# USE_LEX, TAG, RETR via --export
+# USE_LEX, TAG, RETR via --export; PRE: shell command run first (e.g. selfplay/ei_data.py merge)
+[ -n "$PRE" ] && { eval "$PRE" || exit 1; }
 LEXICON=data/NWL23.txt TRAIN=${TRAIN:-hasty_train} TEST=${TEST:-hasty_test} STEPS=${STEPS:-30000} B=48 NEV=600 EVAL_EVERY=2000 PLAY=${PLAY:-300} python train/imitate.py || exit 1
 echo "=== IMITATE DONE"

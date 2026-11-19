@@ -9,6 +9,8 @@ These live in our Macondo checkout on LUMI (`/scratch/project_462001611/macondo`
   win-% leaf), or a Macondo bot; optional Macondo handoff for the end of the game. Run by `lumi/search_eval.sh`; compare runs
   with `tools/search_games.py`. `POSITIONS=file.jsonl`: search single positions (CGPs) instead and write every candidate's
   playout value in every world (`eval/search_positions.py` prepares the positions and scores the choices against the teacher).
+  `OPP=net TRAJ=1`: self-play of the net against itself with every turn recorded (`selfplay/ei_data.py` turns games + search
+  labels into expert-iteration training data; `lumi/ei_round5.sh` runs one round).
 - `macondo_patch/lexmem_accessor.go` -> `ai/bot/`: exposes the bot's Monte Carlo simmer (needed for `CANDS`).
 
 Build: `go build -o bin/<name> ./cmd/<name>` for lexmem_bot, lexmem_selfplay, lexmem_plan, lexmem_search (Go 1.23).

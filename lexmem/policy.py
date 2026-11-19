@@ -185,6 +185,24 @@ class PolicyNet(nn.Module):
             for L in RET_LENS:      # an all-empty, unconstrained lane of length L as the query's lane tokens
                 x = np.zeros((MAXL, LANE_F), dtype=np.float32); x[:L, 26] = 1; x[:L, 27:53] = 1; x[:L, 54] = 1; x[:L, 59] = 1
                 self.register_buffer(f"lane{L}", torch.tensor(x)[None])
+                # inference on GPU (rok): every word of length L and its letter counts (not saved in checkpoints)
+                self.register_buffer(f"cand{L}", torch.tensor(lex.by_len[L], dtype=torch.long), persistent=False)
+                self.register_buffer(f"WL{L}", torch.tensor(lex.W_L[L], dtype=torch.float32), persistent=False)
+    @torch.no_grad()
+    def rok(self, rack, unseen, maxmiss=3, chunk=32):
+        """retrieval_mask for a batch on the GPU, as a dense mask: {f"rok{li}": (B, n_L) bool over cand{L} = lex.by_len[L]}, the
+        same rule as retrieval_mask (rack, unseen: (B, 27) float counts). _encode then takes the same top KRET words as from the
+        index list, without building it on the CPU."""
+        out = {}
+        for li, L in enumerate(RET_LENS):
+            W = getattr(self, f"WL{L}"); ok = []
+            for i in range(0, rack.shape[0], chunk):
+                r, u = rack[i:i + chunk].float(), unseen[i:i + chunk].float(); rb = r[:, 26:27]
+                deficit = (W[None] - r[:, None, :26]).clamp_min(0)
+                avail = (deficit - u[:, None, :26]).clamp_min(0).sum(-1) <= rb
+                ok.append(avail & (deficit.sum(-1) - rb <= maxmiss))
+            out[f"rok{li}"] = torch.cat(ok)
+        return out
     @torch.no_grad()
     def refresh_keys(self, chunk=8192):
         for i in range(0, self.keys.shape[0], chunk):
@@ -218,9 +236,14 @@ class PolicyNet(nn.Module):
                 lane = getattr(self, f"lane{L}").expand(B, -1, -1)
                 glob5 = torch.cat([b["glob"][:, :2], torch.full((B, 1), L / 15, device=dev_), torch.zeros(B, 2, device=dev_)], 1)
                 q = self.qenc(b["rack"], b["unseen"], glob5, lane, b["board"], torch.full((B,), L, device=dev_, dtype=torch.long))
-                rm, rv = b[f"rmask{li}"], b[f"rvalid{li}"]
-                logits = torch.einsum("bd,bcd->bc", q, self.keys[rm]) * (self.D ** -0.5); logits = logits.masked_fill(~rv, -1e4)
-                k = min(KRET, rm.shape[1]); top = logits.topk(k, 1); idx = rm.gather(1, top.indices)
+                if f"rok{li}" in b:   # inference (rok): dense mask over every word of length L, same top KRET as the index list
+                    cand, rv = getattr(self, f"cand{L}"), b[f"rok{li}"]
+                    logits = (q @ self.keys[cand].T) * (self.D ** -0.5); logits = logits.masked_fill(~rv, -1e4)
+                    top = logits.topk(min(KRET, cand.shape[0]), 1); idx = cand[top.indices]
+                else:
+                    rm, rv = b[f"rmask{li}"], b[f"rvalid{li}"]
+                    logits = torch.einsum("bd,bcd->bc", q, self.keys[rm]) * (self.D ** -0.5); logits = logits.masked_fill(~rv, -1e4)
+                    k = min(KRET, rm.shape[1]); top = logits.topk(k, 1); idx = rm.gather(1, top.indices)
                 need = (self.Wt[idx] - b["rack"][:, None, :26]).clamp_min(0).sum(-1)      # letters still needed from the bag
                 rt = self.keys[idx] + self.rfeat(torch.stack([top.values, need / 3], -1)) + self.ttype[5]
                 toks.append(rt); pads.append(~rv.gather(1, top.indices))

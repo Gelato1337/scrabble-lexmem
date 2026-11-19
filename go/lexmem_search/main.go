@@ -16,7 +16,7 @@
 // bin/lexmem_bot processes (each its own GOMEMLIMIT, like the Python harness), fed a CGP with only the mover's rack.
 //
 // Env: SOCK LEXWORDS MACONDO NGAMES SEED CONC BATCH OUT EXCH OURS OURS_SECS OPP OPP_SECS HANDOFF EG_SECS NBOT
-//      K S D LEAF PM Z REC PAR (max playouts in flight, default 4096) POSITIONS NPOS (positions mode, see runPositions)
+//      K S D LEAF PM Z REC PAR (max playouts in flight, default 4096) POSITIONS POS0 NPOS (positions mode, see runPositions) TRAJ (per-turn records); OPP=net: self-play
 // Game g (0-based, G0 .. G0+NGAMES-1): seed SEED+g; our side moves first when g is even. Output: one JSON line per game.
 package main
 
@@ -640,6 +640,50 @@ type GameRec struct {
 	Final  [2]int   `json:"final"`
 	NDec   [3]int   `json:"n"` // our moves by: net or search / Macondo bot (OURS or handoff) / pass with no tokens
 	Dec    []DecRec `json:"dec,omitempty"`
+	FinalP [2]int    `json:"fp,omitempty"`   // TRAJ=1: final points by player index (TurnRec.P)
+	Traj   []TurnRec `json:"traj,omitempty"` // TRAJ=1: every turn, before its move
+}
+type TurnRec struct { // the position for the player on turn and the move played (for training data: selfplay/ei_data.py)
+	Board  string    `json:"b"`  // 225 chars, row-major, '.' empty, lower case = blank
+	Rack   [27]uint8 `json:"rk"` // mover's rack, 26 = blank
+	Unseen [27]uint8 `json:"un"` // bag + opponent's rack
+	Scores [2]int    `json:"sc"` // mover, opponent
+	Bag    int       `json:"bag"`
+	Turn   int       `json:"t"`
+	P      int       `json:"p"` // mover's player index
+	Zeros  int       `json:"z"` // scoreless turns before this move
+	Kind   string    `json:"k"` // play / exch / pass
+	R      int       `json:"r"`
+	C      int       `json:"c"`
+	D      int       `json:"d"`
+	Word   string    `json:"w"` // letters of the play: '.' = tile already on the board, lower case = blank
+	Score  int       `json:"s"`
+}
+
+func turnRec(g *game.Game, turn int, m *move.Move) TurnRec {
+	me := g.PlayerOnTurn()
+	t := TurnRec{Board: boardString(g), Rack: counts(g.RackFor(me).TilesOn()), Unseen: counts(tilemapping.MachineWord(g.Bag().Peek()), g.RackFor(1-me).TilesOn()),
+		Scores: [2]int{g.PointsFor(me), g.PointsFor(1 - me)}, Bag: g.Bag().TilesRemaining(), Turn: turn, P: me, Zeros: g.ScorelessTurns(), Kind: "pass"}
+	switch m.Action() {
+	case move.MoveTypePlay:
+		r, c, vert := m.CoordsAndVertical()
+		t.Kind, t.R, t.C, t.Score = "play", r, c, m.Score()
+		if vert {
+			t.D = 1
+		}
+		var sb strings.Builder
+		for _, tl := range m.Tiles() {
+			if tl == 0 {
+				sb.WriteByte('.')
+			} else {
+				sb.WriteByte(letter(tl))
+			}
+		}
+		t.Word = sb.String()
+	case move.MoveTypeExchange:
+		t.Kind = "exch"
+	}
+	return t
 }
 
 func boardString(g *game.Game) string {
@@ -665,7 +709,7 @@ type Setup struct {
 	Handoff            int
 	EGSecs             float64
 	Srch               *Search
-	Rec                bool
+	Rec, Traj          bool
 }
 
 func playGame(g *game.Game, gen *movegen.GordonGenerator, st *Setup, gi int, seed int64) GameRec {
@@ -683,7 +727,14 @@ func playGame(g *game.Game, gen *movegen.GordonGenerator, st *Setup, gi int, see
 	for g.Playing() != pb.PlayState_GAME_OVER && turn < 100 {
 		me := g.PlayerOnTurn()
 		var m *move.Move
-		if me != us {
+		if me != us && st.Opp == "net" { // self-play: the same net, argmax
+			p := tokensFor(g, gen, turn, MAXM)
+			if len(p.Tokens) == 0 {
+				m = move.NewPassMove(g.RackFor(me).TilesOn(), g.Alphabet())
+			} else {
+				m = p.Tokens[argmax(cl.Infer(p).Logits)].Mv
+			}
+		} else if me != us {
 			m = botMove(g, gen, st.Opp, st.OppSecs)
 		} else if st.Ours != "net" && st.Ours != "search" {
 			m = botMove(g, gen, st.Ours, st.OursSecs)
@@ -717,17 +768,23 @@ func playGame(g *game.Game, gen *movegen.GordonGenerator, st *Setup, gi int, see
 				rec.NDec[0]++
 			}
 		}
+		if st.Traj {
+			rec.Traj = append(rec.Traj, turnRec(g, turn, m))
+		}
 		if err := g.PlayMove(m, false, 0); err != nil {
 			panic(err)
 		}
 		turn++
+	}
+	if st.Traj {
+		rec.FinalP = [2]int{g.PointsFor(0), g.PointsFor(1)}
 	}
 	rec.Final = [2]int{g.PointsFor(us), g.PointsFor(1 - us)}
 	rec.Spread = rec.Final[0] - rec.Final[1]
 	return rec
 }
 
-// ---- positions mode (POSITIONS=file.jsonl with lines {"i", "cgp", "turn", ...}; other fields are ignored; NPOS = first N only):
+// ---- positions mode (POSITIONS=file.jsonl with lines {"i", "cgp", "turn", ...}; other fields are ignored; POS0 / NPOS = a slice):
 // for each position the policy's top K moves and their playout values in each of the S worlds (the same worlds for every
 // candidate; world seeds are drawn in sequence, so the first S' worlds of an S run are an S' run). A CGP leaves the opponent's
 // rack among the unseen tiles; a random one is dealt before the root tokens are built so the bag count matches the position
@@ -761,6 +818,9 @@ func runPositions(path string, s *Search, conc int, seed0 int64, enc *json.Encod
 		ps = append(ps, p)
 	}
 	f.Close()
+	if p0 := envI("POS0", 0); p0 > 0 { // POS0 / NPOS: positions [POS0, POS0 + NPOS) of the file, to split a file over jobs
+		ps = ps[min(p0, len(ps)):]
+	}
 	if n := envI("NPOS", 0); n > 0 && n < len(ps) {
 		ps = ps[:n]
 	}
@@ -839,7 +899,7 @@ func main() {
 		wordIdx[w] = int32(i)
 	}
 	st := &Setup{Ours: envS("OURS", "net"), Opp: envS("OPP", "HASTY_BOT"), OursSecs: envF("OURS_SECS", 10), OppSecs: envF("OPP_SECS", 10),
-		Handoff: envI("HANDOFF", 0), EGSecs: envF("EG_SECS", 10), Rec: os.Getenv("REC") == "1",
+		Handoff: envI("HANDOFF", 0), EGSecs: envF("EG_SECS", 10), Rec: os.Getenv("REC") == "1", Traj: os.Getenv("TRAJ") == "1",
 		Srch: &Search{K: envI("K", 8), S: envI("S", 32), D: envI("D", 2), PM: envI("PM", MAXM), Leaf: envS("LEAF", "mac"), Z: envF("Z", 0)}}
 	exchOK = os.Getenv("EXCH") != "0"
 	ngames, conc, seed0, g0 := envI("NGAMES", 100), envI("CONC", 64), int64(envI("SEED", 777000)), envI("G0", 0)
@@ -862,11 +922,11 @@ func main() {
 		panic(err)
 	}
 	playSem = make(chan struct{}, envI("PAR", 4096))
-	needNet := st.Ours == "net" || st.Ours == "search"
+	needNet := st.Ours == "net" || st.Ours == "search" || st.Opp == "net"
 	if needNet {
 		cl = NewClient(os.Getenv("SOCK"), envI("BATCH", 512))
 	}
-	needPool := st.Opp != "HASTY_BOT" || (st.Ours != "net" && st.Ours != "search" && st.Ours != "HASTY_BOT") || (needNet && st.Handoff > 0)
+	needPool := (st.Opp != "HASTY_BOT" && st.Opp != "net") || (st.Ours != "net" && st.Ours != "search" && st.Ours != "HASTY_BOT") || (needNet && st.Handoff > 0)
 	if needPool {
 		nb := envI("NBOT", 24)
 		pool = make(chan *BotProc, nb)

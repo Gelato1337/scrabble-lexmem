@@ -8,6 +8,7 @@ Protocol (little-endian, one request -> one response, in order, on a Unix socket
             VHEAD=val: [value head without moves, 0] = the imitation nets' trained value: spread change over the next 4
             half-moves / 100 for the player on turn). A position may come with no moves (value only).
 Also writes data/lexwords.txt (our lexicon's word order, which widx indexes) at start.
+Lexicon-memory nets (checkpoint with a query encoder) are detected and get their retrieval masks on the GPU (PolicyNet.rok).
 Usage: CKPT=data/policy_X.pt SOCK=/tmp/lexmem.sock PYTHONPATH=. python selfplay/server_infer.py"""
 import os, socket, struct, time, numpy as np, torch
 from lexmem.core import Lexicon
@@ -17,8 +18,9 @@ E = os.environ.get; dev = "cuda" if torch.cuda.is_available() else "cpu"
 lex = Lexicon(E("LEXICON", "data/NWL23.txt"))
 tmp = f"data/lexwords.txt.{E('SLURM_JOB_ID', os.getpid())}.{os.getpid()}"; open(tmp, "w").write("\n".join(lex.words) + "\n"); os.replace(tmp, "data/lexwords.txt")   # atomic: parallel jobs read it
 VHEAD = E("VHEAD", "td")
-model = PolicyNet(lex).to(dev); model.load_state_dict(torch.load(E("CKPT"), map_location=dev), strict=False); model.eval()
-print(f"model {E('CKPT')} on {dev}; {lex.NW} words; value head {VHEAD}", flush=True)
+sd = torch.load(E("CKPT"), map_location=dev); USE_LEX = any(k.startswith("qenc.") for k in sd)   # lexicon-memory net: has a query encoder
+model = PolicyNet(lex, use_lex=USE_LEX).to(dev); model.load_state_dict(sd, strict=False); model.eval()
+print(f"model {E('CKPT')} on {dev}; {lex.NW} words; value head {VHEAD}; lexicon branch {USE_LEX}", flush=True)
 def recv_exact(conn, n):
     buf = bytearray(n); view = memoryview(buf); got = 0
     while got < n:
@@ -41,9 +43,10 @@ def infer(npos, T, raw):
     b = dict(board=torch.from_numpy(boards.astype(np.int64)), rack=torch.from_numpy(racks.astype(np.float32)), unseen=torch.from_numpy(unseen.astype(np.float32)),
              glob=torch.from_numpy(glob.copy()), mf=torch.from_numpy(F), leave=torch.from_numpy(Lv), widx=torch.from_numpy(W), valid=torch.from_numpy(V))
     b = {k: v.to(dev, non_blocking=True) for k, v in b.items()}
+    if USE_LEX: b.update(model.rok(b["rack"], b["unseen"]))   # retrieval masks on the GPU (same rule as retrieval_mask)
     with torch.autocast(dev, dtype=torch.bfloat16, enabled=dev == "cuda"):
         pl = model.heads(b)[0] if T > 0 else None
-        pb = {k: b[k] for k in ("board", "rack", "unseen", "glob")}   # value as trained: position-only pass
+        pb = {k: v for k, v in b.items() if k in ("board", "rack", "unseen", "glob") or k.startswith("rok")}   # value as trained: position-only pass
         if VHEAD == "val": v = model(pb, with_moves=False)[1]; v = torch.stack([v, torch.zeros_like(v)], 1)
         else: _, v = model.qv(pb, with_moves=False)
     v = v.float().cpu().numpy(); lg = pl.float().cpu().numpy()[row, pos] if T > 0 else np.zeros(0)
