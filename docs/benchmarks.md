@@ -509,3 +509,35 @@ and the start nets were already trained from scratch on 715k teacher-labelled po
 per-position computation (256 worlds per move), which a one-pass net with this architecture does not reproduce from
 examples. The memory arm keeps its round-0 lead over the control and gains nothing extra. Cost: 24.5 GCD-hours (self-play
 1.2, labelling 21.0 — 0.84 s per position without memory, 1.66 s with it — training 1.0, evaluation 1.3).
+
+**Search over each start net, no exchanges (2026-11-20).** The S = 256 gate search (`mac` leaf, Z = 1, handoff) over
+`policy_simsoft_scratch_nolex`, `EXCH=0`, on the round-0 seeds (2000 games, four runs of 500): **58.9 % ± 1.1**, spread
++14.9, **+2.0 ± 1.3** paired over the same net with the handoff (56.9 %). Smaller than the gate's +3.6 with the
+exchange-capable net. The memory arm's run was lost to node failures (a stale MIOpen database of another user in the node's
+`/tmp`; fixed in `lumi/common.sh`) except games 1250–1499: 63.6 %, +2.8 ± 2.6 over the no-memory search on the same games,
+too few to read.
+
+**Our own leaf (2026-11-20): a value net trained on the search's win % does not replace Macondo's leaf.** A copy of each
+start net, every weight fine-tuned (`train/value_leaf.py`), learns the search's win probability for the mover (the S = 256
+`mac`-leaf search's value of its Z = 1 choice) on the expert-iteration round-1 positions of both arms pooled: 57k training
+positions, 3000 held out by game; 6000 steps of 64, LR 1e-4, binary cross-entropy. Held-out error 4.24 (no memory) / 4.31
+(memory) win-% points, against 24.19 for the constant predictor. The search then ends every playout with this net's win
+probability (`LEAF=win`; no table, no leave values) instead of the `mac` leaf. Position check as above: the same 1000
+held-out `simsoft_31` positions, K = 8, D = 2, PM = 64, Z = 1, `EXCH=0`, each arm's own start net as the policy.
+Agreement with the teacher, paired gain over the policy's top move:
+
+| Leaf | Arm | Policy top | S = 32 | S = 64 | S = 128 | S = 256 | Loss at S = 256 |
+|---|---|---|---|---|---|---|---|
+| `mac` | no memory | 68.2 % (loss 0.32) | +1.1 | +5.3 | +7.6 | **+8.5** | **0.15** |
+| own (`win`) | no memory | 68.3 % | −2.0 | −1.6 | +0.7 | +2.5 | 0.26 |
+| `mac` | memory | 67.2 % (loss 0.33) | +4.4 | +6.8 | +8.7 | **+10.0** | **0.14** |
+| own (`win`) | memory | 67.3 % | −1.0 | −0.9 | +2.1 | +2.2 | 0.28 |
+
+(± 1.1–1.4 points.) Our leaf gains a quarter of the `mac` leaf's agreement at S = 256 and removes a third as much of the
+teacher-estimated loss; it is also below the old spread-head leaf (`net`, +4.0 at S = 256, earlier table). It switches as
+often as `mac` but more of its switches leave the teacher's move (79 vs 34 at S = 256 without memory), and the teacher rates
+them worse (loss), so this is not play beyond the teacher. The memory does not help the leaf (+2.2 vs +2.5). Reading: a
+per-position error of about 4 win-% points is larger than the 1–3-point differences between candidates that the search must
+resolve; Macondo's table errs in the same direction for every candidate (paired differences cancel it), a learned net's
+errors do not. No game test (it was to run only if our leaf came close to `mac`). A first run of the memory arm with
+exchange tokens switched on (the start nets have none; policy agreement 51 %) is discarded. Cost: about 8 GPU-hours.

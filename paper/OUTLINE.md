@@ -59,8 +59,8 @@ the precondition for learning foresight from experience (self-play) instead of c
 |---|---|---|
 | Two-turn same-start control | Is the two-turn full-data gain the memory or the pretrained encoder? | **done: the memory** (−0.33 at 270k) |
 | Horizon scaling (1 → 2 → 3 turns) | Does the memory's advantage grow with the lookahead horizon? | needs a three-turn labeller; cost to estimate |
-| Own search leaf (memory vs control) | Can a value net learned from search labels replace Macondo's leaf, and does the memory help it? | running |
-| Search over the memory vs control net | Does the memory make the strongest system stronger? | running (~23 GCD-h) |
+| Own search leaf (memory vs control) | Can a value net learned from search labels replace Macondo's leaf, and does the memory help it? | **done: no** (+2.5 / +2.2 vs `mac` +8.5 / +10.0 agreement; memory no help) |
+| Search over the memory vs control net | Does the memory make the strongest system stronger? | no memory done (+2.0 ± 1.3 over its hybrid); memory arm lost to node failures, rerun ≈ 20 GPU-h undecided |
 | Strength per compute | Where does one forward pass sit on Macondo's simulation-time curve? | proposed, CPU jobs |
 | Rack inference with the memory | Can the memory read the opponent's rack from what they did not play, in one pass? | proposed |
 | Outcome-RL scaling test | Does the memory learn foresight from self-play outcomes faster as games grow (small scale only)? | idea; not planned |
