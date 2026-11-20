@@ -296,6 +296,15 @@ Open control: a two-turn no-memory net with the same pretrained, trainable encod
 
 ![Capacity-matched test](docs/figures/lexplan_capacity_matched.png)
 
+### 16. Search over the net reaches the teacher; distilling it back does not (Nov 18–20)
+A search in Go over the net's top 8 moves, each played out in 256 shared sampled worlds (2 further half-moves by the net,
+then Macondo's win-% table) plus Macondo's solvers for the last 7 bag tiles: **60.1 %** against HastyBot, +3.6 ± 1.3 over the
+net + solvers on 2000 paired games and within noise of the teacher. One round of expert iteration (6000 self-play games per
+arm, 30k positions searched, the net fine-tuned on the search's win %) changes about one move in ten and gains nothing: net
+alone +0.1 ± 1.0 (no memory) and −0.4 ± 1.0 (memory). The search's labels are teacher-quality, and the nets were already
+trained on 715k teacher-labelled positions (2.0M did not help), so more of the same cannot lift them. The memory net keeps
+its lead over the control (+1.7 ± 1.2 alone). Details: [docs/benchmarks.md](docs/benchmarks.md#round-5-2026-11-18-search-based-self-play).
+
 ## Repository layout
 
 | Folder | Contents |

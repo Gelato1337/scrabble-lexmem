@@ -469,3 +469,39 @@ gate table (K = 8, D = 2, PM = 64, handoff), vs HastyBot, the same 2000 seeds (f
 The gate passes (+3.6 against the +3 criterion; the position check predicted about +3.7). On games 0–999 the search is
 −1.7 ± 1.7 against the teacher, within noise; S = 256 is +1.8 ± 1.3 over S = 32. The gain is larger when we move first
 (+5.2 ± 1.8) than second (+2.0 ± 1.9). Cost: about 2 GCD-hours per 500 games (1.4 s of search per move).
+
+**Stage 2, expert iteration round 1 (2026-11-20): the search's choices distilled back into the net give nothing.** One
+round per arm (`lumi/ei_round5.sh 1 <arm> <start>`), starts `policy_simsoft_scratch_nolex` and `policy_simsoft_scratch_lex`.
+(1) 6000 games of the net against itself (argmax, no exchanges, seeds 920000 + g), every turn recorded; 30,000 positions
+sampled (at most 5 per game, the mover played tiles, bag ≥ 8, no openings). (2) Each position searched as in the S = 256
+gate (top K = 8, S = 256 worlds, D = 2, PM = 64, `mac` leaf); a candidate's label is its mean playout win % over the 256
+worlds. (3) Fine-tuning from the start net with `train/imitate.py EI=1`: cross-entropy to softmax(label / 2) over the 8
+candidates, only on positions whose top-2 label margin is ≥ 3 win-% points, plus a KL anchor to the start net (β = 0.5) and
+the usual value losses; 4000 steps of 32, LR 1e-4. (4) The new net alone and with the handoff against HastyBot on the
+round-0 seeds (2000 games, 777000 + g, no exchanges); paired = per-game difference against round 0 on the same seeds.
+
+| | No memory | Memory |
+|---|---|---|
+| Labelled positions with margin ≥ 3, used for the policy loss (200 sampled) | 27.5 % (≈ 8.2k) | 19.5 % (≈ 5.9k) |
+| Search's top candidate = the net's own move (200 sampled) | 69.0 % | 61.0 % |
+| Training loss, step 100 → 4000 | 0.89 → 0.89 | 0.97 → 0.90 |
+| Agreement with the teacher on `simsoft_31` (300 positions), start → final | 0.610 → 0.608 | 0.617 → 0.608 |
+| Games with a changed result vs round 0 (net alone) | 72 % | 73 % |
+
+| Our side | No memory | Memory | Memory − no memory, paired |
+|---|---|---|---|
+| Net alone, round 0 | 52.0 % ± 1.1 | 54.2 % ± 1.1 | +2.2 ± 1.1 |
+| Net alone, round 1 | 52.1 % ± 1.1 | 53.8 % ± 1.1 | +1.7 ± 1.2 |
+| Round 1 − round 0, paired | **+0.1 ± 1.0** | **−0.4 ± 1.0** | |
+| Net + handoff, round 0 | 56.9 % ± 1.1 | 58.2 % ± 1.1 | |
+| Net + handoff, round 1 | 58.0 % ± 1.1 | 58.9 % ± 1.1 | +0.9 ± 1.2 |
+| Round 1 − round 0, paired | +1.1 ± 1.0 | +0.7 ± 1.0 | |
+
+Neither arm improves: the fine-tuned nets change about one move in ten (72 % of games end differently), and the changes are
+neutral on average. The training loss does not fall and the agreement with the teacher does not rise, so the nets did not
+absorb the search's choices. Reading: the labels are teacher-quality (the `mac`-leaf search is within noise of the teacher),
+and the start nets were already trained from scratch on 715k teacher-labelled positions, where 2.0M did not help either
+(`simsoft_big_nolex`, 52.3 %). 6–8k more positions of the same quality cannot move them. What the search adds is
+per-position computation (256 worlds per move), which a one-pass net with this architecture does not reproduce from
+examples. The memory arm keeps its round-0 lead over the control and gains nothing extra. Cost: 24.5 GCD-hours (self-play
+1.2, labelling 21.0 — 0.84 s per position without memory, 1.66 s with it — training 1.0, evaluation 1.3).
