@@ -44,8 +44,8 @@ the precondition for learning foresight from experience (self-play) instead of c
    - Isolation: no cross-check sets, no collapse (refutes our first explanation).
    - Encoder confounds: from-scratch control decides as well as the frozen-encoder memory arm; capacity-matched memory
      beats the same-start control everywhere, the best control only at 3k.
-   - Two turns: memory 3.14 vs 3.56 critical regret at 270k (both seeds), the only full-data decision gain.
-     **Pending:** same-start two-turn control (running 2026-11-20).
+   - Two turns: memory 3.14 vs 3.47 critical regret at 270k against the same-start control (same pretrained, trained
+     encoder; 3.56 against the clean control), better at every size and seed pair: the only full-data decision gain.
    - Dictionary transfer: smaller benchmark loss zero-shot on CSW24, not in games.
    Figs.: `lexplan_within_r2`, `lexplan_no_xchk`, `lexplan_clean_control`, `lexplan_capacity_matched`, `lexplan_two_turn`,
    `lexplan_csw_transfer`.
@@ -57,7 +57,7 @@ the precondition for learning foresight from experience (self-play) instead of c
 ## Open experiments (what would make the central claim)
 | Experiment | Question | Status / cost |
 |---|---|---|
-| Two-turn same-start control | Is the two-turn full-data gain the memory or the pretrained encoder? | running (6 jobs) |
+| Two-turn same-start control | Is the two-turn full-data gain the memory or the pretrained encoder? | **done: the memory** (−0.33 at 270k) |
 | Horizon scaling (1 → 2 → 3 turns) | Does the memory's advantage grow with the lookahead horizon? | needs a three-turn labeller; cost to estimate |
 | Own search leaf (memory vs control) | Can a value net learned from search labels replace Macondo's leaf, and does the memory help it? | running |
 | Search over the memory vs control net | Does the memory make the strongest system stronger? | running (~23 GCD-h) |

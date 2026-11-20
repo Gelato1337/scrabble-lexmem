@@ -291,7 +291,8 @@ cross-checks anywhere). On one turn, with the same start and capacity, memory de
 no-memory net (encoder from scratch) the memory arm wins only at 3k (4.05 vs 4.35, both seeds; 4.42 vs 5.20 on
 dictionary-sensitive CSW positions). At 10k and 270k it is 0.1 points behind. On two turns the memory arm is better at 3k (3.74 vs
 4.30) and at **270k (3.14 vs 3.56, both seeds)**, the first full-data decision gain for the memory and the best two-turn net so far.
-Open control: a two-turn no-memory net with the same pretrained, trainable encoder. Details:
+The same-start two-turn control (same pretrained, trainable encoder, no memory; Nov 20) confirms it is the memory: 4.16 / 4.18 /
+3.47 at 3k / 10k / 270k, worse than the memory arm at every size and on every seed pair (270k: −0.33). Details:
 [docs/benchmarks.md](docs/benchmarks.md#round-4-2026-11-18-capacity-matched-memory-test).
 
 ![Capacity-matched test](docs/figures/lexplan_capacity_matched.png)

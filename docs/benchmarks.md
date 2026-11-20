@@ -372,24 +372,28 @@ Critical regret per seed (NWL): clean 4.19/4.51, 4.35/4.25, 3.74/3.94; same star
 - 10k caveat: every arm is still improving at its last evaluation (step 8000 of the round-2 budget). Both pretrained-encoder arms reach
   lower regret at 3k (4000 steps) than at 10k; the clean arm does not. The 10k comparison depends on the step budget.
 
-**Two turns, trainable encoders** (fixed labels, PV2, 757 critical positions; no cross-checks). The same-start control was not run on
-two turns:
+**Two turns, trainable encoders** (fixed labels, PV2, 757 critical positions; no cross-checks). Same-start = no memory, the same
+pretrained and trained query encoder as the memory arm (`HORIZON=2 QINIT=fut_train ARM=nolex`, run 2026-11-20):
 
 | Training positions | Arm | R² within: E_opp / E_my2 / E_opp2 | Regret all (PV2) | Regret critical (PV2), seeds 0 / 1 |
 |---|---|---|---|---|
 | 3k | clean | 0.052 / 0.512 / 0.049 | 1.88 | 4.30 (4.21 / 4.39) |
+| 3k | same-start | 0.074 / 0.526 / 0.015 | 1.85 | 4.16 (4.01 / 4.30) |
 | 3k | memory | **0.268 / 0.553** / 0.036 | **1.67** | **3.74** (3.61 / 3.87) |
 | 10k | clean | 0.107 / **0.553 / 0.054** | **1.75** | 4.10 (3.88 / 4.31) |
+| 10k | same-start | 0.046 / 0.527 / −0.019 | 1.83 | 4.18 (4.05 / 4.31) |
 | 10k | memory | **0.176** / 0.494 / −0.055 | 1.81 | **4.04** (3.95 / 4.12) |
 | 270k | clean | 0.220 / 0.601 / 0.118 | 1.58 | 3.56 (3.49 / 3.63) |
+| 270k | same-start | 0.242 / 0.615 / 0.139 | 1.53 | 3.47 (3.39 / 3.55) |
 | 270k | memory | **0.325 / 0.629 / 0.166** | **1.41** | **3.14** (3.17 / 3.11) |
 | — | top-score baseline | | 3.32 | 10.73 |
 
 The memory arm is better at 3k (−0.56) and at 270k (−0.42), both seeds, and tied at 10k. At 270k it is the best two-turn net so far
 (frozen encoder with cross-checks, round 3: memory 3.27, control 3.41) and the first full-data decision gain for the memory. It is
-not isolated yet. On one turn the pretrained start alone did not help a no-memory net. On two turns, though, the frozen pretrained
-control with cross-checks (3.41) beats the clean control (3.56), so the pretrained start may help without memory here. The
-same-start two-turn control (`HORIZON=2 QINIT=fut_train ARM=nolex`) settles it.
+now isolated: the same-start control (same pretrained, trained encoder, no memory) gets 4.16 / 4.18 / 3.47, so the memory is
+better at every size and on every seed pair (−0.42 at 3k, −0.14 at 10k, −0.33 at 270k). The pretrained start helps a no-memory
+net a little on two turns (3.47 vs 3.56 clean at 270k), and the memory adds about as much again on top. The memory also ranks
+candidates by the opponent's threat better at every size (within-position R² of E_opp 0.27 / 0.18 / 0.33 vs 0.07 / 0.05 / 0.24).
 
 ## Round 5 (2026-11-18): search-based self-play
 
