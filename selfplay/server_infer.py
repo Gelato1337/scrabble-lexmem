@@ -7,6 +7,8 @@ Protocol (little-endian, one request -> one response, in order, on a Unix socket
   response: f32 logits[T] (policy head), f32 values[npos*2] (TD value head: spread change / 100, win logit;
             VHEAD=val: [value head without moves, 0] = the imitation nets' trained value: spread change over the next 4
             half-moves / 100 for the player on turn). A position may come with no moves (value only).
+VCKPT: the values come from this second net instead (same protocol; e.g. train/value_leaf.py's win head with VHEAD=td),
+the policy logits still from CKPT.
 Also writes data/lexwords.txt (our lexicon's word order, which widx indexes) at start.
 Lexicon-memory nets (checkpoint with a query encoder) are detected and get their retrieval masks on the GPU (PolicyNet.rok).
 Usage: CKPT=data/policy_X.pt SOCK=/tmp/lexmem.sock PYTHONPATH=. python selfplay/server_infer.py"""
@@ -20,7 +22,11 @@ tmp = f"data/lexwords.txt.{E('SLURM_JOB_ID', os.getpid())}.{os.getpid()}"; open(
 VHEAD = E("VHEAD", "td")
 sd = torch.load(E("CKPT"), map_location=dev); USE_LEX = any(k.startswith("qenc.") for k in sd)   # lexicon-memory net: has a query encoder
 model = PolicyNet(lex, use_lex=USE_LEX).to(dev); model.load_state_dict(sd, strict=False); model.eval()
-print(f"model {E('CKPT')} on {dev}; {lex.NW} words; value head {VHEAD}; lexicon branch {USE_LEX}", flush=True)
+vmodel, V_LEX = model, USE_LEX
+if E("VCKPT"):   # values from a separate net
+    vsd = torch.load(E("VCKPT"), map_location=dev); V_LEX = any(k.startswith("qenc.") for k in vsd)
+    vmodel = PolicyNet(lex, use_lex=V_LEX).to(dev); vmodel.load_state_dict(vsd, strict=False); vmodel.eval()
+print(f"model {E('CKPT')} on {dev}; {lex.NW} words; value head {VHEAD}" + (f" of {E('VCKPT')}" if E("VCKPT") else "") + f"; lexicon branch {USE_LEX}/{V_LEX}", flush=True)
 def recv_exact(conn, n):
     buf = bytearray(n); view = memoryview(buf); got = 0
     while got < n:
@@ -43,12 +49,12 @@ def infer(npos, T, raw):
     b = dict(board=torch.from_numpy(boards.astype(np.int64)), rack=torch.from_numpy(racks.astype(np.float32)), unseen=torch.from_numpy(unseen.astype(np.float32)),
              glob=torch.from_numpy(glob.copy()), mf=torch.from_numpy(F), leave=torch.from_numpy(Lv), widx=torch.from_numpy(W), valid=torch.from_numpy(V))
     b = {k: v.to(dev, non_blocking=True) for k, v in b.items()}
-    if USE_LEX: b.update(model.rok(b["rack"], b["unseen"]))   # retrieval masks on the GPU (same rule as retrieval_mask)
+    if USE_LEX or V_LEX: b.update((model if USE_LEX else vmodel).rok(b["rack"], b["unseen"]))   # retrieval masks on the GPU (same rule as retrieval_mask)
     with torch.autocast(dev, dtype=torch.bfloat16, enabled=dev == "cuda"):
         pl = model.heads(b)[0] if T > 0 else None
         pb = {k: v for k, v in b.items() if k in ("board", "rack", "unseen", "glob") or k.startswith("rok")}   # value as trained: position-only pass
-        if VHEAD == "val": v = model(pb, with_moves=False)[1]; v = torch.stack([v, torch.zeros_like(v)], 1)
-        else: _, v = model.qv(pb, with_moves=False)
+        if VHEAD == "val": v = vmodel(pb, with_moves=False)[1]; v = torch.stack([v, torch.zeros_like(v)], 1)
+        else: _, v = vmodel.qv(pb, with_moves=False)
     v = v.float().cpu().numpy(); lg = pl.float().cpu().numpy()[row, pos] if T > 0 else np.zeros(0)
     return lg.astype(np.float32).tobytes() + v.astype(np.float32).tobytes()
 sock_path = E("SOCK", "/tmp/lexmem.sock")

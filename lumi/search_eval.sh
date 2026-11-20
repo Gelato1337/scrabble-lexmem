@@ -10,6 +10,7 @@
 # PRE / POST: shell commands run before the server starts / after the runs (e.g. eval/search_positions.py prep / analyze).
 source lumi/common.sh; set -o pipefail
 export PYTHONPATH=. SOCK=/tmp/lexmem_${SLURM_JOB_ID}.sock VHEAD=${VHEAD:-val}
+export MIOPEN_USER_DB_PATH=/tmp/miopen_${SLURM_JOB_ID} MIOPEN_CUSTOM_CACHE_DIR=/tmp/miopen_${SLURM_JOB_ID}; mkdir -p $MIOPEN_USER_DB_PATH   # a stale MIOpen db of another user in /tmp crashed the server
 [ -n "$PRE" ] && { eval "$PRE" || exit 1; }
 python selfplay/server_infer.py > logs/search_server_${SLURM_JOB_ID}.log 2>&1 &
 SRV=$!

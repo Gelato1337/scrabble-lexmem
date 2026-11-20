@@ -1,6 +1,6 @@
 // lexmem_search: whole games in Go between our side and a Macondo bot (HastyBot by default), for paired evaluations of the
 // policy net, of a search over the net, or of a Macondo bot; optionally Macondo's SIMMING_BOT plays the end of the game for
-// our side. The net is served on a GPU by selfplay/server_infer.py over a Unix socket (VHEAD=val for LEAF=net).
+// our side. The net is served on a GPU by selfplay/server_infer.py over a Unix socket (VHEAD=val for LEAF=net, VHEAD=td + VCKPT for LEAF=win).
 //
 // Search (OURS=search): candidates = the policy's top K moves; S worlds shared by all candidates (bag order and the
 // opponent's rack redrawn from the unseen tiles, as the mover would know them); in each world the candidate is played, then
@@ -8,6 +8,8 @@
 // from the player on turn and the tiles unseen by that player), with
 //   LEAF=mac: spread + leave value of the last play (Macondo's own sim leaf), or
 //   LEAF=net: spread + the value head's predicted spread change over the next 4 half-moves of the player on turn;
+//   or LEAF=win: no table, the value net's own win probability for the player on turn (sigmoid of value [1]; serve with
+//   VHEAD=td and VCKPT = a train/value_leaf.py net);
 // a finished game counts 1 / 0.5 / 0. The candidate with the highest mean is played, but it replaces the policy's top move
 // only if its mean paired (same-world) difference exceeds Z standard errors (Z=0: plain argmax). PM caps the playout move list
 // (top PM plays by score; the root always uses MAXM). REC=1 stores each search decision (position, candidates, estimates).
@@ -527,6 +529,13 @@ func (s *Search) playout(gc *game.Game, cand *move.Move, me, turn int, sd [32]by
 		return outcome(gc.PointsFor(me) - gc.PointsFor(1-me))
 	}
 	q := gc.PlayerOnTurn()
+	if s.Leaf == "win" { // our own leaf: the value net's win probability for the player on turn
+		w := 1 / (1 + math.Exp(-float64(cl.Infer(buildPos(gc, turn+1+s.D)).Value[1])))
+		if q == me {
+			return w
+		}
+		return 1 - w
+	}
 	unseen := gc.Bag().TilesRemaining() + int(gc.RackFor(1-q).NumTiles())
 	sq := float64(gc.PointsFor(q) - gc.PointsFor(1-q))
 	var x float64 // spread from q's view, including the leaf estimate

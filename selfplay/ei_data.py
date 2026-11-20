@@ -11,11 +11,16 @@ merge TAG OUT LABEL_TAG [LABEL_TAG ...]
     [(r, c, d, L, widx)] = the search's candidates and cand_est = their mean playout win % over the S worlds, known=True; every
     other position known=False (no policy target; it stays in the trajectory for the k-ply value targets). train/imitate.py EI=1
     then trains on softmax(cand_est / TAU) over the candidates.
+values TAG OUT LABEL_TAG [LABEL_TAG ...]
+    Value targets for our own search leaf (train/value_leaf.py): every labelled position of data/searchpos_<TAG>.jsonl as
+    (record, y) in data/vleaf_<OUT>.pkl, y = the search's value of the position for the mover = mean playout win probability
+    (over the S worlds) of the candidate the search plays (lexmem_search's Z = 1 rule: the policy's top move unless another
+    candidate's mean paired gain exceeds one standard error). Also stored: y_top (policy's top move), y_max (best mean), g.
 check OUT [USE_LEX]
     Loads data/games_<OUT>.pkl through train/imitate.py's MoveDataset (EI=1, TAU=2) and prints soft-target statistics."""
-import sys, json, random, pickle, numpy as np
+import os, sys, json, random, pickle, numpy as np
 from lexmem.core import LET, IDX, N
-sys.path.insert(0, "eval"); from search_positions import cgp
+sys.path.insert(0, "eval"); from search_positions import cgp, pick
 
 def games_of(tag):
     return [json.loads(l) for l in open(f"data/search_{tag}.jsonl")]
@@ -58,6 +63,19 @@ def merge(tag, out, label_tags):
     pickle.dump(games, open(f"data/games_{out}.pkl", "wb"))
     print(f"{len(games)} games, {sum(len(t) for t, _ in games)} positions, {nl} labelled ({len(lab)} labels) -> data/games_{out}.pkl")
 
+def values(tag, out, label_tags):
+    where = {p["i"]: (p["g"], p["ti"]) for p in map(json.loads, open(f"data/searchpos_{tag}.jsonl"))}
+    games = {gr["g"]: gr for gr in games_of(tag)}; res = []
+    for lt in label_tags:
+        for o in map(json.loads, open(f"data/search_{lt}.jsonl")):
+            if not o["v"]: continue   # one candidate: no search value
+            V = np.array(o["v"], dtype=np.float64); m = V.mean(1); g, ti = where[o["i"]]
+            res.append(dict(rec=record(games[g]["traj"][ti]), y=float(m[pick(V, V.shape[1], 1.0)]), y_top=float(m[0]), y_max=float(m.max()), g=g))
+    tmp = f"data/vleaf_{out}.pkl.{os.getpid()}"; pickle.dump(res, open(tmp, "wb")); os.replace(tmp, f"data/vleaf_{out}.pkl")   # atomic: parallel jobs build it
+    y = np.array([r["y"] for r in res])
+    print(f"{len(res)} positions -> data/vleaf_{out}.pkl: y mean {100 * y.mean():.1f} %, sd {100 * y.std():.1f}; "
+          f"y - y_top {100 * np.mean([r['y'] - r['y_top'] for r in res]):+.2f}, y_max - y {100 * np.mean([r['y_max'] - r['y'] for r in res]):+.2f} win-% points")
+
 def check(out, use_lex):
     from lexmem.core import Lexicon
     from lexmem.policy import MoveDataset
@@ -71,4 +89,5 @@ def check(out, use_lex):
 if __name__ == "__main__":
     if sys.argv[1] == "positions": positions(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]))
     elif sys.argv[1] == "merge": merge(sys.argv[2], sys.argv[3], sys.argv[4:])
+    elif sys.argv[1] == "values": values(sys.argv[2], sys.argv[3], sys.argv[4:])
     else: check(sys.argv[2], len(sys.argv) > 3 and sys.argv[3] == "1")
