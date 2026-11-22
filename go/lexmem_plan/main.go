@@ -9,11 +9,15 @@
 // H2=1 adds a two-turn horizon on the same samples, every side playing its best-scoring move: the opponent's best reply is played,
 //   E_my2  = mean best score of the mover (leave + refill) on the board after that reply,
 //   E_opp2 = mean best score of the opponent's next play after the mover's best play (its leave + refill from the bag);
-//   two-turn planning value PV2 = score - E_opp + E_my2 - E_opp2. CHECK=1 recomputes cross-sets and anchors from scratch for every
+//   two-turn planning value PV2 = score - E_opp + E_my2 - E_opp2.
+// H3=1 (implies H2) continues the same line one more exchange: the opponent's second reply is played and it draws, the mover
+//   (leave of its second play + refill) answers again, the opponent (leave + refill) replies again:
+//   E_my3 = mean best score of the mover's third play, E_opp3 = mean best score of the opponent's third play;
+//   three-turn planning value PV3 = PV2 + E_my3 - E_opp3. CHECK=1 recomputes cross-sets and anchors from scratch for every
 //   two-turn board and reports mismatches with the incremental update on stderr.
 // stdin: {"id":..,"cgp":".."} per line; stdout: {"id":..,"cands":[{"d":[0,r,c,d,L,widx,score,blanks],"eo":..,"em":..,"so":..,"sm":..,
-//   "h2":{"em2":..,"eo2":..,"sm2":..,"so2":..}}]}
-// Env: K S LEXWORDS (our word order for widx) LEXICON (KWG name, default NWL23) WORKERS H2 CHECK
+//   "h2":{"em2":..,"eo2":..,"sm2":..,"so2":..},"h3":{"em3":..,"eo3":..,"sm3":..,"so3":..}}]}
+// Env: K S LEXWORDS (our word order for widx) LEXICON (KWG name, default NWL23) WORKERS H2 H3 CHECK
 package main
 
 import (
@@ -48,7 +52,7 @@ func envI(k string, d int) int {
 }
 
 var wordIdx map[string]int32
-var h2, check bool
+var h2, h3, check bool
 var nCheck, nShadow, nIncr, nB1, nB1Check int64
 
 type In struct {
@@ -62,6 +66,13 @@ type Cand struct {
 	SO float64 `json:"so"`
 	SM float64 `json:"sm"`
 	H2 *Two    `json:"h2,omitempty"`
+	H3 *Three  `json:"h3,omitempty"`
+}
+type Three struct {
+	EM3 float64 `json:"em3"`
+	EO3 float64 `json:"eo3"`
+	SM3 float64 `json:"sm3"`
+	SO3 float64 `json:"so3"`
 }
 type Two struct {
 	EM2 float64 `json:"em2"`
@@ -87,6 +98,11 @@ func bestMove(gen *movegen.GordonGenerator, rack *tilemapping.Rack, dst *move.Mo
 	if len(ps) == 0 || ps[0].Action() != move.MoveTypePlay { return 0, false }
 	dst.CopyFrom(ps[0])
 	return ps[0].Score(), true
+}
+
+// takeTiles: remove the tiles m placed from rack (a blank designated as a letter leaves the rack as a blank).
+func takeTiles(rack *tilemapping.Rack, m *move.Move) {
+	for _, t := range m.Tiles() { if t == 0 { continue }; if t.IsBlanked() { rack.Take(0) } else { rack.Take(t) } }
 }
 
 // playOn: put m on b and bring its cross-sets up to date (anchors are updated by PlayMove).
@@ -164,10 +180,19 @@ func label(cfg *config.Config, gd *kwg.KWG, in In, K, S int) Out {
 		// two-turn scratch: boards after the opponent's reply (b2) and after the mover's next play (b3), one generator each
 		var b2, b3 *board.GameBoard; var g2, g3 *movegen.GordonGenerator; var m1, m2 *move.Move; var rO2 *tilemapping.Rack
 		bufR := make([]tilemapping.MachineLetter, 7); tm2, tm22, to2, to22 := 0.0, 0.0, 0.0, 0.0
+		newGen := func(b *board.GameBoard) *movegen.GordonGenerator {
+			x := movegen.NewGordonGenerator(gd, b, ld); x.SetSortingParameter(movegen.SortByScore); x.SetPlayRecorderTopPlay(); return x
+		}
 		if h2 {
 			b2, b3 = gc.Board().Copy(), gc.Board().Copy(); m1, m2 = new(move.Move), new(move.Move); rO2 = tilemapping.NewRack(alph)
-			g2 = movegen.NewGordonGenerator(gd, b2, ld); g2.SetSortingParameter(movegen.SortByScore); g2.SetPlayRecorderTopPlay()
-			g3 = movegen.NewGordonGenerator(gd, b3, ld); g3.SetSortingParameter(movegen.SortByScore); g3.SetPlayRecorderTopPlay()
+			g2, g3 = newGen(b2), newGen(b3)
+		}
+		// three-turn scratch: boards after the opponent's second reply (b4) and after the mover's third play (b5)
+		var b4, b5 *board.GameBoard; var g4, g5 *movegen.GordonGenerator; var m3, m4 *move.Move; var rM3, rO3 *tilemapping.Rack
+		bufM3, bufO3 := make([]tilemapping.MachineLetter, 7), make([]tilemapping.MachineLetter, 7); tm3, tm32, to3, to32 := 0.0, 0.0, 0.0, 0.0
+		if h3 {
+			b4, b5 = gc.Board().Copy(), gc.Board().Copy(); m3, m4 = new(move.Move), new(move.Move); rM3, rO3 = tilemapping.NewRack(alph), tilemapping.NewRack(alph)
+			g4, g5 = newGen(b4), newGen(b5)
 		}
 		for s := 0; s < S; s++ {
 			// canonical tile order before the seeded shuffle: reproducible, and candidates share their draws as far as their pools allow
@@ -195,11 +220,35 @@ func label(cfg *config.Config, gd *kwg.KWG, in In, K, S int) Out {
 				b3.CopyFrom(b2)
 				if ok2 { playOn(b3, m2, gd, ld) }
 				rO2.CopyFrom(rO)
-				if ok1 { for _, t := range m1.Tiles() { if t == 0 { continue }; if t.IsBlanked() { rO2.Take(0) } else { rO2.Take(t) } } }
+				if ok1 { takeTiles(rO2, m1) }
 				n3 := t1; if r := bag.TilesRemaining(); n3 > r { n3 = r }
 				if n3 > 0 { if err := bag.Draw(n3, bufR); err != nil { n3 = 0 } else { for _, t := range bufR[:n3] { rO2.Add(t) } } }
-				o2 := bestScore(g3, rO2)
+				var o2 int; ok3 := false
+				if h3 { o2, ok3 = bestMove(g3, rO2, m3) } else { o2 = bestScore(g3, rO2) }
 				if check { checkBest(b3, rO2, o2, gd, ld) }
+				if h3 {
+					// the opponent plays its second reply; the mover refills after its second play (drawing after the opponent's
+					// refill, as in the game) and answers; the opponent refills and replies again
+					b4.CopyFrom(b3); t3 := 0
+					if ok3 { playOn(b4, m3, gd, ld); t3 = m3.TilesPlayed() }
+					rM3.CopyFrom(rM); t2 := 0
+					if ok2 { takeTiles(rM3, m2); t2 = m2.TilesPlayed() }
+					n4 := t2; if r := bag.TilesRemaining(); n4 > r { n4 = r }
+					if n4 > 0 { if err := bag.Draw(n4, bufM3); err != nil { n4 = 0 } else { for _, t := range bufM3[:n4] { rM3.Add(t) } } }
+					my3, ok4 := bestMove(g4, rM3, m4)
+					if check { checkBest(b4, rM3, my3, gd, ld) }
+					b5.CopyFrom(b4)
+					if ok4 { playOn(b5, m4, gd, ld) }
+					rO3.CopyFrom(rO2)
+					if ok3 { takeTiles(rO3, m3) }
+					n5 := t3; if r := bag.TilesRemaining(); n5 > r { n5 = r }
+					if n5 > 0 { if err := bag.Draw(n5, bufO3); err != nil { n5 = 0 } else { for _, t := range bufO3[:n5] { rO3.Add(t) } } }
+					o3 := bestScore(g5, rO3)
+					if check { checkBest(b5, rO3, o3, gd, ld) }
+					if n5 > 0 { bag.PutBack(bufO3[:n5]) }
+					if n4 > 0 { bag.PutBack(bufM3[:n4]) }
+					tm3 += float64(my3); tm32 += float64(my3 * my3); to3 += float64(o3); to32 += float64(o3 * o3)
+				}
 				if n3 > 0 { bag.PutBack(bufR[:n3]) }
 				tm2 += float64(my2); tm22 += float64(my2 * my2); to2 += float64(o2); to22 += float64(o2 * o2)
 			}
@@ -211,6 +260,10 @@ func label(cfg *config.Config, gd *kwg.KWG, in In, K, S int) Out {
 		if h2 {
 			a, b := tm2/n, to2/n
 			cand.H2 = &Two{EM2: a, EO2: b, SM2: math.Sqrt(math.Max(tm22/n-a*a, 0)), SO2: math.Sqrt(math.Max(to22/n-b*b, 0))}
+		}
+		if h3 {
+			a, b := tm3/n, to3/n
+			cand.H3 = &Three{EM3: a, EO3: b, SM3: math.Sqrt(math.Max(tm32/n-a*a, 0)), SO3: math.Sqrt(math.Max(to32/n-b*b, 0))}
 		}
 		out.Cands = append(out.Cands, cand)
 	}
@@ -229,7 +282,7 @@ func main() {
 	gd, err := kwg.GetKWG(cfg.WGLConfig(), lexName)
 	if err != nil { panic(err) }
 	K, S, W := envI("K", 16), envI("S", 256), envI("WORKERS", 8)
-	h2, check = os.Getenv("H2") == "1", os.Getenv("CHECK") == "1"
+	h3 = os.Getenv("H3") == "1"; h2, check = os.Getenv("H2") == "1" || h3, os.Getenv("CHECK") == "1"
 	in := make(chan In, 1024); outc := make(chan Out, 1024); var wg sync.WaitGroup
 	for w := 0; w < W; w++ { wg.Add(1); go func() { defer wg.Done(); for x := range in { outc <- label(cfg, gd, x, K, S) } }() }
 	go func() { wg.Wait(); close(outc) }()
@@ -243,6 +296,6 @@ func main() {
 	bw.Flush()
 	if check {
 		f := func(x int64) string { return strconv.FormatInt(x, 10) }
-		os.Stderr.WriteString("CHECK one-turn (shadow vs full): " + f(nB1) + " of " + f(nB1Check) + "; two-turn: shadow vs full " + f(nShadow) + ", incremental vs scratch " + f(nIncr) + " of " + f(nCheck) + "\n")
+		os.Stderr.WriteString("CHECK one-turn (shadow vs full): " + f(nB1) + " of " + f(nB1Check) + "; two/three-turn: shadow vs full " + f(nShadow) + ", incremental vs scratch " + f(nIncr) + " of " + f(nCheck) + "\n")
 	}
 }

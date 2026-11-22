@@ -10,11 +10,11 @@ Eval only: EVAL_CKPTS=a.pt,b.pt (weights from another dictionary load fine; word
 same positions under another dictionary> adds a report on the quarter of positions whose labels moved most.
 QINIT: fut (default) = query encoder from the future-word model, frozen; fut_train = same start, trained; random = fresh and trained
 (a control with no dictionary-trained part). HORIZON=2 (labels from go/lexmem_plan H2=1): three outputs E_opp, E_my2, E_opp2 and the two-turn planning value
-PV2 = score - E_opp + E_my2 - E_opp2.
+PV2 = score - E_opp + E_my2 - E_opp2. HORIZON=3 (H3=1 labels): five outputs, + E_my3, E_opp3; PV3 = PV2 + E_my3 - E_opp3.
 Usage: ARM=lex MAX_TRAIN=50000 STEPS=20000 SEED=0 TAG=lexplan_lex_50k python train/train_lexplan.py"""
 import os, sys, time, math, pickle, random, importlib.util, numpy as np, torch, torch.nn.functional as F
-H2 = os.environ.get("HORIZON", "1") == "2"
-if H2: os.environ["NOUT"] = "3"
+HOR = int(os.environ.get("HORIZON", "1")); H2 = HOR >= 2; H3 = HOR == 3
+if H2: os.environ["NOUT"] = "5" if H3 else "3"
 from torch.utils.data import Dataset, DataLoader
 spec = importlib.util.spec_from_file_location("tlv", os.path.join(os.path.dirname(__file__), "train_lexvalue.py")); tlv = importlib.util.module_from_spec(spec); spec.loader.exec_module(tlv)
 from lexmem.core import *
@@ -26,6 +26,7 @@ TAU = float(E("TAU", 1.5)); RANK_W = float(E("RANK_W", 1.0)); BPOS = int(E("BPOS
 QINIT = E("QINIT", "fut")
 # targets: (name, index in the cands tuple, sign in the planning value)
 TGT = [("E_opp", 2, -1), ("E_my2", 6, 1), ("E_opp2", 7, -1)] if H2 else [("E_opp", 2, -1), ("E_my", 3, 1)]
+if H3: TGT += [("E_my3", 10, 1), ("E_opp3", 11, -1)]
 assert not (H2 and LOSS == "rank")
 torch.manual_seed(SEED); random.seed(SEED); np.random.seed(SEED)
 data = pickle.load(open(E("DATA", "data/plan_v1.pkl"), "rb"))
@@ -43,6 +44,7 @@ def item(i, j):
     if it is None: return None
     it["G"], it["W"] = np.float32(eo / 50), np.float32(em / 50); it["pos"], it["cand_j"] = i, j
     if H2: c = data[i]["cands"][j]; it["W"], it["G2"] = np.float32(c[6] / 50), np.float32(c[7] / 50)
+    if H3: it["W3"], it["G3"] = np.float32(c[10] / 50), np.float32(c[11] / 50)
     return it
 class DS(Dataset):
     def __init__(self, seed): self.rng = random.Random(seed)
@@ -70,6 +72,7 @@ def coll_pos(groups):
 def coll(items):
     b = tlv.collate(items); b["pos"] = torch.tensor([it["pos"] for it in items]); b["cand_j"] = torch.tensor([it["cand_j"] for it in items])   # not "cand": that is the lex arm's retrieval tensor
     if H2: b["G2"] = torch.tensor([it["G2"] for it in items])
+    if H3: b["W3"] = torch.tensor([it["W3"] for it in items]); b["G3"] = torch.tensor([it["G3"] for it in items])
     return b
 
 model = tlv.LexValue().to(dev)
@@ -78,7 +81,7 @@ assert QINIT in ("fut", "fut_train", "random")
 if QINIT != "random": model.qenc.load_state_dict({k[5:]: v for k, v in sd.items() if k.startswith("qenc.")})
 if QINIT == "fut":
     for p in model.qenc.parameters(): p.requires_grad_(False)
-print(f"query encoder: {dict(fut='future-word model, frozen', fut_train='future-word model, trained', random='fresh, trained')[QINIT]}; horizon {2 if H2 else 1}", flush=True)
+print(f"query encoder: {dict(fut='future-word model, frozen', fut_train='future-word model, trained', random='fresh, trained')[QINIT]}; horizon {HOR}", flush=True)
 if tlv.LEXARM:
     model.wenc.load_state_dict({k[5:]: v for k, v in sd.items() if k.startswith("wenc.") and not k.startswith("wenc.slot") and k not in ("wenc.POS", "wenc.LEN")}, strict=False)
     model.refresh_keys()
@@ -154,6 +157,7 @@ for b in loader:
     with torch.autocast(dev, dtype=torch.bfloat16, enabled=dev == "cuda"): v, _ = model(b)
     v = v.float(); loss = F.smooth_l1_loss(v[:, 0], b["G"]) + F.smooth_l1_loss(v[:, 1], b["W"])
     if H2: loss = loss + F.smooth_l1_loss(v[:, 2], b["G2"])
+    if H3: loss = loss + F.smooth_l1_loss(v[:, 3], b["W3"]) + F.smooth_l1_loss(v[:, 4], b["G3"])
     if LOSS == "rank":   # listwise: predicted PV = score - 50 E_opp + 50 E_my vs exact PV, softmax over each position's candidates
         pv_hat = b["sc"] - 50 * v[:, 0] + 50 * v[:, 1]; pv = b["sc"] - 50 * b["G"] + 50 * b["W"]; lr_ = 0.0
         for g in b["grp"].unique():

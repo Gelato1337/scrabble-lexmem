@@ -13,6 +13,10 @@ These live in our Macondo checkout on LUMI (`/scratch/project_462001611/macondo`
   labels into expert-iteration training data; `lumi/ei_round5.sh` runs one round). `LEAF=win`: our own leaf, the win
   probability of a separate value net (`train/value_leaf.py`, trained on the search's labels; served with `VCKPT=` and
   `VHEAD=td`) instead of Macondo's win-% table.
+- `lexmem_plan/main.go` -> `cmd/lexmem_plan/`: exact planning labels by enumeration over the dictionary (one turn; `H2=1` two
+  turns, `H3=1` three turns; `CHECK=1` verifies against full enumeration). Run by `lumi/plan_label.sh`, merged by `prep/plan_positions.py`.
+- `lexmem_infer/main.go` -> `cmd/lexmem_infer/`: Macondo's rack inference (rangefinder) on positions from `eval/infer_macondo.py`,
+  per-tile marginals of the opponent's kept tiles: the reference for the rack-inference benchmark (`train/train_lexinfer.py`).
 - `macondo_patch/lexmem_accessor.go` -> `ai/bot/`: exposes the bot's Monte Carlo simmer (needed for `CANDS`).
 
-Build: `go build -o bin/<name> ./cmd/<name>` for lexmem_bot, lexmem_selfplay, lexmem_plan, lexmem_search (Go 1.23).
+Build: `go build -o bin/<name> ./cmd/<name>` for lexmem_bot, lexmem_selfplay, lexmem_plan, lexmem_search, lexmem_infer (Go 1.23).

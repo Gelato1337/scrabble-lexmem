@@ -3,7 +3,7 @@
   merge : python prep/plan_positions.py merge  spf_0 data/plan_in.jsonl data/plan_out.jsonl TAG -> data/plan_{TAG}.pkl  [ORDER_REF=data/plan_v1.pkl]
 The pickle holds one dict per position: the position fields (board, blanks, rack, unseen, scores, bag, turn, mover, gi) and
 cands = [(desc, score, E_opp, E_my, sd_opp, sd_my)] with desc = (0, r, c, d, L, widx, score, blanks); labels made with H2=1 append the
-two-turn fields (E_my2, E_opp2, sd_my2, sd_opp2)."""
+two-turn fields (E_my2, E_opp2, sd_my2, sd_opp2); H3=1 labels also the three-turn fields (E_my3, E_opp3, sd_my3, sd_opp3)."""
 import os, sys, json, random, pickle, types
 from lexmem.harness import HastyBot
 cgp_of = lambda r: HastyBot.cgp(types.SimpleNamespace(lexicon="NWL23"), r["board"], r["blanks"], r["rack"], r["scores"], 0)
@@ -23,6 +23,7 @@ else:
         if o.get("err") or not o.get("cands"): bad += 1; continue
         gi, ti = o["id"]; r = dict(games[gi][0][ti]); r["gi"] = gi
         r["cands"] = [(tuple(c["d"]), c["d"][6], c["eo"], c["em"], c["so"], c["sm"]) + ((c["h2"]["em2"], c["h2"]["eo2"], c["h2"]["sm2"], c["h2"]["so2"]) if "h2" in c else ())
+                      + ((c["h3"]["em3"], c["h3"]["eo3"], c["h3"]["sm3"], c["h3"]["so3"]) if "h3" in c else ())
                       for c in o["cands"]]
         res.append(r)
     if os.environ.get("ORDER_REF"):   # same record order as an earlier labelling of these positions (held-out / training subsets are by index)
