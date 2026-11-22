@@ -17,7 +17,9 @@
 //   two-turn board and reports mismatches with the incremental update on stderr.
 // stdin: {"id":..,"cgp":".."} per line; stdout: {"id":..,"cands":[{"d":[0,r,c,d,L,widx,score,blanks],"eo":..,"em":..,"so":..,"sm":..,
 //   "h2":{"em2":..,"eo2":..,"sm2":..,"so2":..},"h3":{"em3":..,"eo3":..,"sm3":..,"so3":..}}]}
-// Env: K S LEXWORDS (our word order for widx) LEXICON (KWG name, default NWL23) WORKERS H2 H3 CHECK
+// Optional input "okeep" (one turn; the planning-with-inference test, eval/plan_infer.py): sample s gives the opponent the kept
+//   tiles okeep[s % len] plus a refill from the rest of the pool instead of 7 tiles drawn from the whole pool.
+// Env: K S LEXWORDS (our word order for widx) LEXICON (KWG name, default NWL23) WORKERS H2 H3 CHECK SEED0 (offset of the sample seeds)
 package main
 
 import (
@@ -53,11 +55,13 @@ func envI(k string, d int) int {
 
 var wordIdx map[string]int32
 var h2, h3, check bool
-var nCheck, nShadow, nIncr, nB1, nB1Check int64
+var nCheck, nShadow, nIncr, nB1, nB1Check, nKeepFail int64
+var seed0 uint64
 
 type In struct {
-	ID  json.RawMessage `json:"id"`
-	CGP string          `json:"cgp"`
+	ID    json.RawMessage `json:"id"`
+	CGP   string          `json:"cgp"`
+	OKeep []string        `json:"okeep,omitempty"`   // optional (one turn): sample s gives the opponent the kept tiles OKeep[s % len] + a refill
 }
 type Cand struct {
 	D  []int   `json:"d"`
@@ -134,6 +138,15 @@ func label(cfg *config.Config, gd *kwg.KWG, in In, K, S int) Out {
 	if err != nil { out.Err = err.Error(); return out }
 	g := pg.Game; g.RecalculateBoard(); g.SetBackupMode(game.InteractiveGameplayMode); g.SetStateStackLength(1)
 	me := g.PlayerOnTurn(); bd := g.Board(); ld := g.Rules().LetterDistribution()
+	var keeps [][]tilemapping.MachineLetter
+	if len(in.OKeep) > 0 {
+		if h2 { out.Err = "okeep is one-turn only"; return out }
+		for _, k := range in.OKeep {
+			mls, err := tilemapping.ToMachineLetters(k, g.Alphabet())
+			if err != nil { out.Err = "okeep: " + err.Error(); return out }
+			keeps = append(keeps, mls)
+		}
+	}
 	gen := movegen.NewGordonGenerator(gd, bd, ld); gen.SetGame(g)
 	plays := gen.GenAll(g.RackFor(me), false)
 	type c struct { m *move.Move; d []int; blanks, score int }
@@ -196,13 +209,20 @@ func label(cfg *config.Config, gd *kwg.KWG, in In, K, S int) Out {
 		}
 		for s := 0; s < S; s++ {
 			// canonical tile order before the seeded shuffle: reproducible, and candidates share their draws as far as their pools allow
-			var sd [32]byte; binary.LittleEndian.PutUint64(sd[:], uint64(s)+1); gc.SeedBag(sd)
+			var sd [32]byte; binary.LittleEndian.PutUint64(sd[:], uint64(s)+1+seed0); gc.SeedBag(sd)
 			bt := bag.Tiles(); sort.Slice(bt, func(i, j int) bool { return bt[i] < bt[j] }); bag.Shuffle()
 			pool := bag.TilesRemaining(); ko := pool; if ko > 7 { ko = 7 }
+			// given kept tiles: the opponent holds them + a refill from the rest (its draw after its play), the mover draws after
+			var kp []tilemapping.MachineLetter
+			if len(keeps) > 0 {
+				kp = keeps[s%len(keeps)]
+				if err := bag.RemoveTiles(kp); err != nil { atomic.AddInt64(&nKeepFail, 1); continue }
+				pool = bag.TilesRemaining(); ko = 7 - len(kp); if ko > pool { ko = pool }
+			}
 			km := 7 - len(leave); if km > pool-ko { km = pool - ko }; if km < 0 { km = 0 }
-			if err := bag.Draw(ko, bufO); err != nil { continue }
-			if err := bag.Draw(km, bufM); err != nil { bag.PutBack(bufO[:ko]); continue }
-			rO.Set(bufO[:ko]); rM.Set(append(append([]tilemapping.MachineLetter{}, leave...), bufM[:km]...))
+			if err := bag.Draw(ko, bufO); err != nil { if kp != nil { bag.PutBack(kp) }; continue }
+			if err := bag.Draw(km, bufM); err != nil { bag.PutBack(bufO[:ko]); if kp != nil { bag.PutBack(kp) }; continue }
+			rO.Set(append(append([]tilemapping.MachineLetter{}, kp...), bufO[:ko]...)); rM.Set(append(append([]tilemapping.MachineLetter{}, leave...), bufM[:km]...))
 			var o float64; ok1 := false
 			if h2 { var oi int; oi, ok1 = bestMove(tg, rO, m1); o = float64(oi) } else { o = float64(bestScore(tg, rO)) }
 			mm := float64(bestScore(tg, rM))
@@ -252,7 +272,7 @@ func label(cfg *config.Config, gd *kwg.KWG, in In, K, S int) Out {
 				if n3 > 0 { bag.PutBack(bufR[:n3]) }
 				tm2 += float64(my2); tm22 += float64(my2 * my2); to2 += float64(o2); to22 += float64(o2 * o2)
 			}
-			bag.PutBack(bufO[:ko]); bag.PutBack(bufM[:km])
+			bag.PutBack(bufO[:ko]); bag.PutBack(bufM[:km]); if kp != nil { bag.PutBack(kp) }
 			so += o; so2 += o * o; sm += mm; sm2 += mm * mm
 		}
 		n := float64(S); eo, em := so/n, sm/n
@@ -282,7 +302,7 @@ func main() {
 	gd, err := kwg.GetKWG(cfg.WGLConfig(), lexName)
 	if err != nil { panic(err) }
 	K, S, W := envI("K", 16), envI("S", 256), envI("WORKERS", 8)
-	h3 = os.Getenv("H3") == "1"; h2, check = os.Getenv("H2") == "1" || h3, os.Getenv("CHECK") == "1"
+	h3 = os.Getenv("H3") == "1"; h2, check = os.Getenv("H2") == "1" || h3, os.Getenv("CHECK") == "1"; seed0 = uint64(envI("SEED0", 0))
 	in := make(chan In, 1024); outc := make(chan Out, 1024); var wg sync.WaitGroup
 	for w := 0; w < W; w++ { wg.Add(1); go func() { defer wg.Done(); for x := range in { outc <- label(cfg, gd, x, K, S) } }() }
 	go func() { wg.Wait(); close(outc) }()
@@ -294,6 +314,7 @@ func main() {
 	bw := bufio.NewWriterSize(os.Stdout, 1<<20); enc := json.NewEncoder(bw)
 	for o := range outc { enc.Encode(o); bw.Flush() }   // flush per position: live callers (play_eval PLAN=exact) wait for each answer
 	bw.Flush()
+	if nKeepFail > 0 { os.Stderr.WriteString("okeep: kept tiles not in the pool in " + strconv.FormatInt(nKeepFail, 10) + " samples\n") }
 	if check {
 		f := func(x int64) string { return strconv.FormatInt(x, 10) }
 		os.Stderr.WriteString("CHECK one-turn (shadow vs full): " + f(nB1) + " of " + f(nB1Check) + "; two/three-turn: shadow vs full " + f(nShadow) + ", incremental vs scratch " + f(nIncr) + " of " + f(nCheck) + "\n")

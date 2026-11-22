@@ -8,7 +8,9 @@
 // Output per line: {"i":..,"n":inferred leaves,"complete":..,"marg":[27][4] = P(kept count 0 / 1 / 2 / 3+) per tile in our
 // order (A..Z, blank), "post": posterior of the true leave, "prior": its prior, "lift": log2(post/prior) (-999 if undefined),
 // "secs":..,"err":..}
-// Env: BUDGET TIME THREADS (rangefinder threads per position) WORKERS (positions in parallel)
+// Env: BUDGET TIME THREADS (rangefinder threads per position) WORKERS (positions in parallel); diagnostics (default: Macondo's
+// settings): PROPOSAL=prior|floor (refine rounds draw from the prior / keep a FLOOR share of prior mass, default 0.2),
+// TAU (pinned softmax temperature of P(play | leave))
 package main
 
 import (
@@ -57,6 +59,10 @@ func envI(k string, d int) int {
 	if v, err := strconv.Atoi(os.Getenv(k)); err == nil { return v }
 	return d
 }
+func envF(k string, d float64) float64 {
+	if v, err := strconv.ParseFloat(os.Getenv(k), 64); err == nil { return v }
+	return d
+}
 
 // ours: Macondo machine letter (0 = blank, 1..26 = A..Z) -> our tile index (0..25 = A..Z, 26 = blank)
 func ours(ml tilemapping.MachineLetter) int {
@@ -78,6 +84,11 @@ func infer(cfg *config.Config, calc equity.EquityCalculator, x In, budget, secs,
 	g.ThrowRacksInFor(opp)
 	rf := &rangefinder.RangeFinder{}
 	rf.Init(g, []equity.EquityCalculator{calc}, cfg); rf.SetThreads(threads); rf.SetBudget(budget)
+	switch os.Getenv("PROPOSAL") {
+	case "prior": rf.SetProposalMode(rangefinder.ProposalPrior)
+	case "floor": rf.SetProposalMode(rangefinder.ProposalFloor); rf.SetExplorationFloor(envF("FLOOR", 0.2))
+	}
+	if tau := envF("TAU", 0); tau > 0 { rf.SetTau(tau) }
 	if err := rf.PrepareFinder(g.RackFor(g.PlayerOnTurn()).TilesOn()); err != nil { out.Err = err.Error(); return out }
 	var ctx context.Context; var cancel context.CancelFunc
 	if budget > 0 { ctx, cancel = context.WithCancel(context.Background()) } else { ctx, cancel = context.WithTimeout(context.Background(), time.Duration(secs)*time.Second) }

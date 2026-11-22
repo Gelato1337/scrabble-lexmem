@@ -15,8 +15,14 @@ These live in our Macondo checkout on LUMI (`/scratch/project_462001611/macondo`
   `VHEAD=td`) instead of Macondo's win-% table.
 - `lexmem_plan/main.go` -> `cmd/lexmem_plan/`: exact planning labels by enumeration over the dictionary (one turn; `H2=1` two
   turns, `H3=1` three turns; `CHECK=1` verifies against full enumeration). Run by `lumi/plan_label.sh`, merged by `prep/plan_positions.py`.
+  Optional input `okeep` (one turn): the opponent's kept tiles per sample (+ a refill) instead of a uniform rack; `SEED0` shifts the
+  sample seeds (`eval/plan_infer.py`, `lumi/plan_infer.sh`).
 - `lexmem_infer/main.go` -> `cmd/lexmem_infer/`: Macondo's rack inference (rangefinder) on positions from `eval/infer_macondo.py`,
   per-tile marginals of the opponent's kept tiles: the reference for the rack-inference benchmark (`train/train_lexinfer.py`).
+  Diagnostics: `PROPOSAL=prior|floor`, `TAU`.
+- `lexmem_invert/main.go` -> `cmd/lexmem_invert/`: exact rack inference against a static HastyBot: every possible kept set is
+  checked by HastyBot's own move choice; posterior marginals, whether the true kept set reproduces the play, and with `SAMPLES=k`
+  k posterior samples (`lumi/infer_exact.sh`).
 - `macondo_patch/lexmem_accessor.go` -> `ai/bot/`: exposes the bot's Monte Carlo simmer (needed for `CANDS`).
 
-Build: `go build -o bin/<name> ./cmd/<name>` for lexmem_bot, lexmem_selfplay, lexmem_plan, lexmem_search, lexmem_infer (Go 1.23).
+Build: `go build -o bin/<name> ./cmd/<name>` for lexmem_bot, lexmem_selfplay, lexmem_plan, lexmem_search, lexmem_infer, lexmem_invert (Go 1.23).

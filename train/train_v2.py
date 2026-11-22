@@ -70,9 +70,10 @@ opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.01)
 # ---- phase 1: V
 t0 = time.time(); vp = refresh(); T = value_targets(vp, float(E("LAM1", LAM))); print(f"phase 1 targets in {time.time()-t0:.0f}s", flush=True)
 class DV(Dataset):
-    def __init__(self, s): self.rng = random.Random(s)
+    def __init__(self, s): self.seed, self.rng = s, None   # one random stream per DataLoader worker
     def __len__(self): return 10 ** 8
     def __getitem__(self, i):
+        if self.rng is None: wi = torch.utils.data.get_worker_info(); self.rng = random.Random(self.seed * 1000 + (wi.id if wi else 0) + i)
         gi, ti = flat_tr[self.rng.randrange(len(flat_tr))]; it = pos_item(games[gi][0][ti]); it["G"], it["W"] = T[(gi, ti)]; return it
 def cv(batch):
     b = collate_moves(batch); b["G"] = torch.tensor([x["G"] for x in batch]); b["W"] = torch.tensor([x["W"] for x in batch]); return b
@@ -94,9 +95,10 @@ print(f"advantages: mean {av.mean():+.4f} sd {sdA:.4f} (U units; 0.01 = 1 win-% 
       f"branch dU: n={len(br)} mean {br.mean() if len(br) else 0:+.4f} sd {br.std() if len(br) else 0:.4f}", flush=True)
 def same(m, b): return (m[3] == 2 and b[3] == 2 and tuple(m[5]) == tuple(b[5])) or (m[3] != 2 and b[3] != 2 and tuple(m[1:6]) == tuple(b[1:6]))
 class DP(Dataset):
-    def __init__(self, s): self.rng = random.Random(s)
+    def __init__(self, s): self.seed, self.rng = s, None   # one random stream per DataLoader worker
     def __len__(self): return 10 ** 8
     def __getitem__(self, i):
+        if self.rng is None: wi = torch.utils.data.get_worker_info(); self.rng = random.Random(self.seed * 1000 + (wi.id if wi else 0) + i)
         while True:
             gi, ti = items[self.rng.randrange(len(items))]; r = games[gi][0][ti]; m = r["move"]
             it = helper.build(r, 0.0, target_keep=np.array(m[1])) if m[0] == "exchange" else helper.build(r, 0.0, target_rcd=(m[1], m[2], m[3], m[5]))

@@ -313,7 +313,9 @@ at 270k). The advantage is the same size as at one and two turns (−0.20 to −
 with the horizon. A second use outside planning: after HastyBot plays, infer the tiles it kept. Against the exact no-inference
 baseline (11.14 bits per position) the memory net trained on 481k positions saves 0.52 bits, the same-start control 0.37
 (paired −0.15 ± 0.02 bits, both seeds). Macondo's rangefinder (25 s per position) holds more (median 0.82 bits saved; +0.94
-once its ~4 % of overconfident misses are softened), so one forward pass gets a bit over half of it. Details:
+once its ~4 % of overconfident misses are softened), so one forward pass gets a bit over half of it. **Caveat (Nov 22):** these
+nets, and every planning-benchmark net in findings 7–15 and 17, were trained with a sampler bug (each batch repeated 28 times
+in a row; see the end of round 6 in the benchmarks); reruns with the fix are under way for rack inference. Details:
 [docs/benchmarks.md](docs/benchmarks.md#round-6-2026-11-22-three-turns-and-rack-inference).
 
 ## Repository layout

@@ -77,10 +77,11 @@ if LUCK and len(spreads) > 10:
 
 # ---- 3. train Q (chosen move) and V (position)
 items = [(gi, ti) for gi, ti in flat if games[gi][0][ti]["move"][0] in ("play", "exchange")]
-class D(Dataset):
-    def __init__(self, seed): self.rng = random.Random(seed)
+class D(Dataset):   # one random stream per DataLoader worker (a shared seed made every worker draw the same batches)
+    def __init__(self, seed): self.seed, self.rng = seed, None
     def __len__(self): return 10 ** 8
     def __getitem__(self, i):
+        if self.rng is None: wi = torch.utils.data.get_worker_info(); self.rng = random.Random(self.seed * 1000 + (wi.id if wi else 0) + i)
         while True:
             gi, ti = items[self.rng.randrange(len(items))]; r = games[gi][0][ti]; m = r["move"]
             it = helper.build(r, 0.0, target_keep=np.array(m[1])) if m[0] == "exchange" else helper.build(r, 0.0, target_rcd=(m[1], m[2], m[3], m[5]))

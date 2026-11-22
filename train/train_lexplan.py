@@ -46,10 +46,11 @@ def item(i, j):
     if H2: c = data[i]["cands"][j]; it["W"], it["G2"] = np.float32(c[6] / 50), np.float32(c[7] / 50)
     if H3: it["W3"], it["G3"] = np.float32(c[10] / 50), np.float32(c[11] / 50)
     return it
-class DS(Dataset):
-    def __init__(self, seed): self.rng = random.Random(seed)
+class DS(Dataset):   # one random stream per DataLoader worker (a shared seed made every worker draw the same batches)
+    def __init__(self, seed): self.seed, self.rng = seed, None
     def __len__(self): return 10 ** 9
     def __getitem__(self, k):
+        if self.rng is None: wi = torch.utils.data.get_worker_info(); self.rng = random.Random(self.seed * 1000 + (wi.id if wi else 0) + k)
         while True:
             it = item(*train_items[self.rng.randrange(len(train_items))])
             if it is not None: return it
@@ -58,9 +59,10 @@ class DSfix(Dataset):
     def __len__(self): return len(self.keys)
     def __getitem__(self, k): return item(*self.keys[k])
 class DSpos(Dataset):   # rank mode: one item = all candidates of one training position
-    def __init__(self, seed): self.rng = random.Random(seed)
+    def __init__(self, seed): self.seed, self.rng = seed, None
     def __len__(self): return 10 ** 9
     def __getitem__(self, k):
+        if self.rng is None: wi = torch.utils.data.get_worker_info(); self.rng = random.Random(self.seed * 1000 + (wi.id if wi else 0) + k)
         while True:
             i = train_pos[self.rng.randrange(len(train_pos))]
             its = [x for x in (item(i, j) for j in range(len(data[i]["cands"]))) if x is not None]

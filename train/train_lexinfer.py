@@ -11,7 +11,8 @@ as a correction to the baseline: logits = baseline log-probabilities + the net's
 Baseline (no inference): the exact posterior of the kept tiles given only that the rack held P, the rack being a uniform
 7-tile draw from U: P(leave) ∝ Π_x C(U_x, P_x + leave_x); per-tile marginals by dynamic programming.
 Metric (NEV_POS held-out positions): log-loss of the true kept counts summed over the 27 tiles, in bits, model vs baseline;
-bits saved per position, by phase (bag before the move). The final evaluation also writes data/<TAG>_evbits.npy.
+bits saved per position, by phase (bag before the move). The final evaluation also writes data/<TAG>_evbits.npy and the
+model's log-probabilities data/<TAG>_evlogp.npy (held-out order; used by the planning-with-inference test).
 Arms as the planning benchmark: QINIT=fut_train (pretrained query encoder, trained, both arms), NO_XCHK=1 (set in the env).
 Env: ARM QINIT MAX_TRAIN STEPS B LR SEED NWORK NEV_POS EVAL_EVERY TAG
 Usage: ARM=lex QINIT=fut_train NO_XCHK=1 MAX_TRAIN=3000 STEPS=4000 SEED=0 TAG=lexinfer_lex_3000_s0 python train/train_lexinfer.py"""
@@ -66,10 +67,12 @@ def item(A, i):
                 Y=np.minimum(A["leave"][i], 3).astype(np.int64), BL=baseline_logp(Ui, Pi, n).astype(np.float32))
 def coll(items):
     b = tlv.collate(items); b["Y"] = torch.tensor(np.stack([it["Y"] for it in items])); b["BL"] = torch.tensor(np.stack([it["BL"] for it in items])); return b
-class DS(Dataset):
-    def __init__(self, seed): self.rng = random.Random(seed)
+class DS(Dataset):   # one random stream per DataLoader worker (a shared seed made every worker draw the same batches)
+    def __init__(self, seed): self.seed, self.rng = seed, None
     def __len__(self): return 10 ** 9
-    def __getitem__(self, k): return item(TR, train_idx[self.rng.randrange(len(train_idx))])
+    def __getitem__(self, k):
+        if self.rng is None: wi = torch.utils.data.get_worker_info(); self.rng = random.Random(self.seed * 1000 + (wi.id if wi else 0) + k)
+        return item(TR, train_idx[self.rng.randrange(len(train_idx))])
 class DSfix(Dataset):
     def __len__(self): return len(ev_idx)
     def __getitem__(self, k): return item(TE, ev_idx[k])
@@ -92,15 +95,17 @@ LN2 = math.log(2)
 
 @torch.no_grad()
 def evaluate(tag):
-    model.eval(); rows = []
+    model.eval(); rows = []; LP = []
     for k in range(0, len(EV), 128):
         b = {kk: v.to(dev) for kk, v in coll(EV[k:k + 128]).items()}
         with torch.autocast(dev, dtype=torch.bfloat16, enabled=dev == "cuda"): v, _ = model(b)
         lp = torch.log_softmax(b["BL"] + v.float().view(-1, 27, 4), -1); Y = b["Y"][..., None]
-        nm = -lp.gather(-1, Y).squeeze(-1).sum(1); nb = -b["BL"].gather(-1, Y).squeeze(-1).sum(1)
+        nm = -lp.gather(-1, Y).squeeze(-1).sum(1); nb = -b["BL"].gather(-1, Y).squeeze(-1).sum(1); LP.append(lp.cpu().numpy())
         rows += list(zip((nm / LN2).tolist(), (nb / LN2).tolist(), b["bag"].tolist()))
     model.train(); R = np.array(rows)
-    if tag == "final": np.save(f"data/{TAG}_evbits.npy", R)   # per held-out position (ev order): model bits, baseline bits, bag
+    if tag == "final":
+        np.save(f"data/{TAG}_evbits.npy", R)   # per held-out position (ev order): model bits, baseline bits, bag
+        np.save(f"data/{TAG}_evlogp.npy", np.concatenate(LP).astype(np.float32))   # (n, 27, 4) log P(kept count 0 / 1 / 2 / 3+) per tile
     line = f"[{tag}] held-out n={len(R)}: model {R[:,0].mean():.3f} bits, baseline {R[:,1].mean():.3f} bits, saved {(R[:,1]-R[:,0]).mean():+.3f} ± {(R[:,1]-R[:,0]).std()/np.sqrt(len(R)):.3f}"
     for lo, hi, nm_ in ((61, 100, "opening"), (31, 60, "middle"), (8, 30, "late"), (1, 7, "pre-end")):
         k = (R[:, 2] >= lo) & (R[:, 2] <= hi)

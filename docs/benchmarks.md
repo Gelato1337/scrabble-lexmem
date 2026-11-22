@@ -601,10 +601,10 @@ the played move). All data = 40,000 steps of 64 (5.3 passes), seeds 0–1. Basel
 
 - With all the data the memory arm extracts more from the move than the control, on both seeds and in every bag range
   (bag 1–20 / 21–40 / 41–60 / 61+: +0.13 / +0.19 / +0.08 / +0.19 bits). Both arms are still improving at the last evaluation.
-- At 3k positions (4000 steps, 85 passes) both arms end far below the baseline: training loss ≈ 9 bits against 13.5 held-out,
-  i.e. they memorise. The full-data runs also pass through a phase below the baseline (−1.9 to −4.3 bits at step 4000) and
-  cross it between steps 16k and 28k. The 3k / 10k design of the planning benchmark does not fit one noisy target per
-  position; the remaining 3k and 10k runs (5 jobs) are on hold.
+- At 3k positions both arms end far below the baseline (training loss ≈ 9 bits against 13.5 held-out), and the full-data
+  runs pass through a phase below the baseline (−1.9 to −4.3 bits at step 4000) before crossing it between steps 16k and 28k.
+  Both are signatures of the sampler bug below (each batch trained on 28 times in a row), not of the data size alone. The
+  remaining 3k and 10k runs (5 jobs) are on hold.
 
 **Macondo's rack inference as the reference** (`go/lexmem_infer`, `eval/infer_macondo.py`; the rangefinder of
 `SIMMING_INFER_BOT`, NWL23 static equity calculator: for candidate leaves it measures the likelihood of the play by short
@@ -627,3 +627,17 @@ reach a bit over half of what a 25-second rangefinder search finds. Why Macondo 
 Candidates: its likelihood models a simulating player while HastyBot is static; its own code notes that under the default proposal a
 leave whose imputed likelihood has collapsed has no route back (`rangefinder/refine.go`); the rebuild from a bare CGP. Cost:
 inference training 10.7 GPU-hours; rangefinder runs 2 × 24 min on 128 CPU cores.
+
+**Sampler bug (found 2026-11-22).** `train_lexplan.py`, `train_lexvalue.py`, `train_lexinfer.py`, `train_td.py` and
+`train_v2.py` drew training positions from one `random.Random(seed)` held by the dataset object. Every DataLoader worker
+gets an identical copy, so all NWORK workers produced the same batches and each distinct batch was trained on NWORK times in
+a row (reproduced with a minimal DataLoader: 4 workers, 12 batches, 3 distinct). A run of STEPS steps therefore saw
+STEPS / NWORK distinct batches: with NWORK = 28 the 3k / 10k / 270k planning runs saw 143 / 286 / 1429 distinct batches of 64
+(about 3k / 8k / 78k distinct positions), each 28 times in a row. Affected: every planning-benchmark net (rounds 2–6,
+including the nets in the planning-policy games), the stage-2 value test (`train_lexvalue.py`, 24 workers), the
+rack-inference nets above, and the Q-learning and gated actor-critic self-play trainers (16 workers). Not affected: the
+policy nets (imitation, distillation, expert iteration: `lexmem/policy.py`, `lexmem/data.py`), `train_future.py`,
+`train_value.py`, `train_belief.py`, `train_branch.py`, `train/value_leaf.py`. Arms within a round used the same seeds and
+data, so they saw the same batches (the comparisons are paired), but absolute levels, data-size effects and step budgets are
+those of the repeated-batch regime. Fixed: one random stream per worker, as `train_future.py` does. The rack-inference
+all-data runs are repeated with the fix (`lexinfer_fix_*`); the planning-benchmark runs are not yet.

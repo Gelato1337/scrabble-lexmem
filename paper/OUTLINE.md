@@ -66,6 +66,8 @@ the precondition for learning foresight from experience (self-play) instead of c
 | Search over the memory vs control net | Does the memory make the strongest system stronger? | no memory done (+2.0 ± 1.3 over its hybrid); memory arm lost to node failures, rerun ≈ 20 GPU-h undecided |
 | Strength per compute | Where does one forward pass sit on Macondo's simulation-time curve? | proposed, CPU jobs |
 | Rack inference with the memory | Can the memory read the opponent's rack from what they did not play, in one pass? | **done at full data: yes, partly** (+0.52 vs +0.37 bits saved over the exact baseline, paired −0.15 ± 0.02; Macondo's rangefinder +0.94 softened / +0.21 raw); small-data runs on hold (memorise at 3k) |
+| Planning benchmark with the fixed sampler | Do the memory-vs-control results (1–3 turns, 3k / 10k / 270k) hold when every batch is distinct? (Nov 22: all planning nets saw each batch 28× in a row) | needed before any claim; ≈ 36 GPU-h (memory + same-start, 3 horizons) to ≈ 46 (+ clean control) |
+| Planning with inference | Does the inferred rack change one-turn planning decisions, and does the memory's better inference carry over? | running (CPU; after the fixed inference nets) |
 | Outcome-RL scaling test | Does the memory learn foresight from self-play outcomes faster as games grow (small scale only)? | idea; not planned |
 
 ## Venues (to check: deadlines, JUFO levels)

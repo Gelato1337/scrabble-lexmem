@@ -141,9 +141,10 @@ class LexValue(nn.Module):
         return self.val(h[:, 0]), aux_logits
 
 class DS(Dataset):
-    def __init__(self, keys, seed): self.keys, self.rng = keys, random.Random(seed)
+    def __init__(self, keys, seed): self.keys, self.seed, self.rng = keys, seed, None   # one random stream per DataLoader worker
     def __len__(self): return 10 ** 9
     def __getitem__(self, i):
+        if self.rng is None: wi = torch.utils.data.get_worker_info(); self.rng = random.Random(self.seed * 1000 + (wi.id if wi else 0) + i)
         while True:
             gi, ti = self.keys[self.rng.randrange(len(self.keys))]; tr, fs = games[gi]
             it = build(tr[ti], fs, None if "next_move" in tr[ti] else (tr[ti + 1] if ti + 1 < len(tr) else None))
