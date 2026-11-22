@@ -306,6 +306,16 @@ alone +0.1 ± 1.0 (no memory) and −0.4 ± 1.0 (memory). The search's labels ar
 trained on 715k teacher-labelled positions (2.0M did not help), so more of the same cannot lift them. The memory net keeps
 its lead over the control (+1.7 ± 1.2 alone). Details: [docs/benchmarks.md](docs/benchmarks.md#round-5-2026-11-18-search-based-self-play).
 
+### 17. Three turns and rack inference: the memory helps both, and the gap does not grow (Nov 22)
+Three-turn exact labels (the two-turn line continued one more exchange; 300k positions): against the same-start control the
+memory arm's critical regret is lower at every size and on every seed pair (4.10 vs 4.37 at 3k, 4.21 vs 4.52 at 10k, 3.51 vs 3.70
+at 270k). The advantage is the same size as at one and two turns (−0.20 to −0.31 points vs −0.14 to −0.42), so it does not grow
+with the horizon. A second use outside planning: after HastyBot plays, infer the tiles it kept. Against the exact no-inference
+baseline (11.14 bits per position) the memory net trained on 481k positions saves 0.52 bits, the same-start control 0.37
+(paired −0.15 ± 0.02 bits, both seeds). Macondo's rangefinder (25 s per position) holds more (median 0.82 bits saved; +0.94
+once its ~4 % of overconfident misses are softened), so one forward pass gets a bit over half of it. Details:
+[docs/benchmarks.md](docs/benchmarks.md#round-6-2026-11-22-three-turns-and-rack-inference).
+
 ## Repository layout
 
 | Folder | Contents |

@@ -541,3 +541,89 @@ per-position error of about 4 win-% points is larger than the 1–3-point differ
 resolve; Macondo's table errs in the same direction for every candidate (paired differences cancel it), a learned net's
 errors do not. No game test (it was to run only if our leaf came close to `mac`). A first run of the memory arm with
 exchange tokens switched on (the start nets have none; policy agreement 51 %) is discarded. Cost: about 8 GPU-hours.
+
+## Round 6 (2026-11-22): three turns and rack inference
+
+**Three-turn horizon** (`go/lexmem_plan H3=1`, K = 16, S = 256, the same 300k positions in the record order of `plan_v1`;
+CHECK on the smoke set: 0 mismatches in 516,608 one-turn and 1,033,216 two/three-turn checks; the one- and two-turn fields equal
+the `plan_h2` labels on 256 positions / 4060 candidates). The two-turn line continues one more exchange: the opponent's second
+reply is played, the mover answers (E_my3), the opponent replies (E_opp3); PV3 = PV2 + E_my3 − E_opp3. `train_lexplan.py
+HORIZON=3`, five outputs, the round-4 setting (`QINIT=fut_train NO_XCHK=1`, both arms; same-start control = `ARM=nolex`),
+seeds 0–1, 3000 held-out positions (2998 labelled), 1010 of them critical under PV3 (the PV3-best move beats the top-scoring
+move by ≥ 5 points; 757 under PV2):
+
+| Training positions | Arm | R² within: E_opp / E_my2 / E_opp2 / E_my3 / E_opp3 | Regret all (PV3) | Regret critical (PV3), seeds 0 / 1 |
+|---|---|---|---|---|
+| 3k | same-start | 0.113 / 0.542 / 0.025 / 0.241 / 0.011 | 2.29 | 4.37 (4.42 / 4.31) |
+| 3k | memory | **0.260 / 0.565 / 0.043** / 0.244 / 0.014 | **2.13** | **4.10** (4.09 / 4.11) |
+| 10k | same-start | −0.015 / 0.500 / −0.036 / 0.188 / −0.102 | 2.36 | 4.52 (4.65 / 4.38) |
+| 10k | memory | **0.241 / 0.557 / 0.038 / 0.255 / 0.019** | **2.22** | **4.21** (4.09 / 4.32) |
+| 270k | same-start | 0.206 / 0.614 / 0.143 / 0.318 / 0.111 | 1.93 | 3.70 (3.84 / 3.56) |
+| 270k | memory | **0.331 / 0.619 / 0.168 / 0.334 / 0.140** | **1.88** | **3.51** (3.62 / 3.39) |
+| — | top-score baseline | | 4.60 | 12.08 |
+
+The memory arm has lower critical regret at every size and on every seed pair (−0.27 / −0.31 / −0.20; seed pairs −0.33 / −0.20,
+−0.56 / −0.06, −0.22 / −0.17). Decision accuracy is about equal at 270k (memory 0.584 / 0.604, control 0.594 / 0.597): the memory's
+misses cost less. Its within-position advantage stays on the opponent's first reply (E_opp 0.33 vs 0.21 at 270k); the third
+turn adds little to either arm (within R² of E_opp3 ≤ 0.15).
+
+**Horizon scaling.** The memory's critical-regret advantage over the same-start control does not grow with the horizon (each
+horizon has its own labels and critical set, so only the differences compare):
+
+| Horizon | 3k | 10k | 270k | Seed pairs with the memory ahead |
+|---|---|---|---|---|
+| One turn (round 4) | −0.30 | −0.25 | −0.17 | 5 of 6 |
+| Two turns (round 4) | −0.42 | −0.14 | −0.33 | 6 of 6 |
+| Three turns | −0.27 | −0.31 | −0.20 | 6 of 6 |
+
+From two turns on the memory is ahead in every comparison at every size, by 0.14–0.42 points (3–10 % of the control's
+regret). The hypothesis that a longer horizon would widen the gap is not supported at three turns. Cost: labels 8 × 24 min on
+128 CPU cores (≈ 410 core-hours); training 13.9 GPU-hours.
+
+**Rack inference** (`train/train_lexinfer.py`). After HastyBot's tile play, which tiles did it keep? Data
+(`prep/infer_positions.py`): every HastyBot tile play with ≥ 1 tile in the bag and ≥ 1 tile kept, from the round-0 HastyBot
+games: 481,157 training positions (30k games), 32,014 held-out (2000 other games); 3.25 kept tiles and 42 bag tiles on
+average. The observer knows the board, the placed tiles P and its own rack, so the opponent's rack was 7 tiles drawn from the
+unseen tiles U and contained P. Baseline (no inference): the exact posterior of the kept tiles from that alone,
+P(leave) ∝ Π_x C(U_x, P_x + leave_x), per-tile marginals by dynamic programming (checked against enumeration). Target: for
+each of the 27 tiles the kept count 0 / 1 / 2 / 3+; metric: log-loss of the true counts summed over the 27 tiles, in bits,
+on 3000 held-out positions (fixed sample); "saved" = baseline − model. The net outputs a correction to the baseline's
+log-probabilities (last layer zero at the start, so an untrained net is the baseline). Arms as the planning benchmark
+(`QINIT=fut_train NO_XCHK=1`; lanes of the board before the move, P in the leave slot, U − P as unseen, plus one unit for
+the played move). All data = 40,000 steps of 64 (5.3 passes), seeds 0–1. Baseline: 11.142 bits.
+
+| Training positions | Arm | Bits saved, seeds 0 / 1 | Paired memory − control (bits; negative = memory better) |
+|---|---|---|---|
+| 481k | same-start | +0.347 / +0.395 (± 0.025) | |
+| 481k | memory | **+0.455 / +0.585** (± 0.028) | **−0.149 ± 0.018 bits** (seeds −0.108 ± 0.023, −0.191 ± 0.021) |
+| 3k | same-start | −2.481 (seed 0) | |
+| 3k | memory | −2.382 / −2.337 | |
+
+- With all the data the memory arm extracts more from the move than the control, on both seeds and in every bag range
+  (bag 1–20 / 21–40 / 41–60 / 61+: +0.13 / +0.19 / +0.08 / +0.19 bits). Both arms are still improving at the last evaluation.
+- At 3k positions (4000 steps, 85 passes) both arms end far below the baseline: training loss ≈ 9 bits against 13.5 held-out,
+  i.e. they memorise. The full-data runs also pass through a phase below the baseline (−1.9 to −4.3 bits at step 4000) and
+  cross it between steps 16k and 28k. The 3k / 10k design of the planning benchmark does not fit one noisy target per
+  position; the remaining 3k and 10k runs (5 jobs) are on hold.
+
+**Macondo's rack inference as the reference** (`go/lexmem_infer`, `eval/infer_macondo.py`; the rangefinder of
+`SIMMING_INFER_BOT`, NWL23 static equity calculator: for candidate leaves it measures the likelihood of the play by short
+simulations, imputes it for the leaves it does not measure, and refines over rounds). The first 1000 of the 3000 held-out positions, the game rebuilt as the position before the play + the play, 4 threads per position:
+
+| Reference | Bits saved, mean | Median | Positions > 5 bits worse than baseline | Time per position |
+|---|---|---|---|---|
+| Rangefinder, budget 200 leaves (Macondo's paired-experiment setting) | +0.210 ± 0.189 | +0.824 | 39 | 25.3 s |
+| Rangefinder, 20 s | +0.154 ± 0.176 | +0.688 | 46 | 17.4 s |
+| Budget 200, mixed 0.9 with the baseline | +0.939 ± 0.071 | +0.864 | 18 | |
+| Budget 200, mixed 0.8 with the baseline | +0.982 ± 0.060 | +0.837 | 7 | |
+| Memory net, mean of 2 seeds, same positions | +0.546 | | | one forward pass |
+| Same-start control, mean of 2 seeds | +0.393 | | | one forward pass |
+
+Macondo's inference holds more information than our nets (median +0.82 bits), but on about 4 % of positions it gives the
+true kept tiles almost no probability, which costs its mean most of that. Mixed with the baseline (weights tried 0.5–0.95 on
+these same positions, all +0.77 to +0.98) it beats both nets: memory net − Macondo mixed 0.9 = +0.39 ± 0.07 bits, control
++0.55 ± 0.07. Raw, it is level with them within its large error (memory − raw Macondo −0.34 ± 0.19). So the one-pass nets
+reach a bit over half of what a 25-second rangefinder search finds. Why Macondo rules out the true leave on those positions is not yet checked.
+Candidates: its likelihood models a simulating player while HastyBot is static; its own code notes that under the default proposal a
+leave whose imputed likelihood has collapsed has no route back (`rangefinder/refine.go`); the rebuild from a bare CGP. Cost:
+inference training 10.7 GPU-hours; rangefinder runs 2 × 24 min on 128 CPU cores.

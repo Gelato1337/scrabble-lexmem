@@ -1,4 +1,4 @@
-# Paper outline (working draft, 2026-11-20)
+# Paper outline (working draft, 2026-11-22)
 
 No deadline: the outline collects the claim, the evidence we have, and the experiments still needed. Numbers come from
 `docs/benchmarks.md` (provenance there); figures from `docs/figures/`.
@@ -45,7 +45,10 @@ the precondition for learning foresight from experience (self-play) instead of c
    - Encoder confounds: from-scratch control decides as well as the frozen-encoder memory arm; capacity-matched memory
      beats the same-start control everywhere, the best control only at 3k.
    - Two turns: memory 3.14 vs 3.47 critical regret at 270k against the same-start control (same pretrained, trained
-     encoder; 3.56 against the clean control), better at every size and seed pair: the only full-data decision gain.
+     encoder; 3.56 against the clean control), better at every size and seed pair: the first full-data decision gain.
+   - Three turns: memory 3.51 vs 3.70 at 270k, better at every size and seed pair; the gap does not grow with the horizon.
+   - Rack inference (a second use outside planning): memory saves 0.52 vs 0.37 bits per position over the exact
+     no-inference baseline; Macondo's 25-s rangefinder is the ceiling we know (+0.94 softened).
    - Dictionary transfer: smaller benchmark loss zero-shot on CSW24, not in games.
    Figs.: `lexplan_within_r2`, `lexplan_no_xchk`, `lexplan_clean_control`, `lexplan_capacity_matched`, `lexplan_two_turn`,
    `lexplan_csw_transfer`.
@@ -58,11 +61,11 @@ the precondition for learning foresight from experience (self-play) instead of c
 | Experiment | Question | Status / cost |
 |---|---|---|
 | Two-turn same-start control | Is the two-turn full-data gain the memory or the pretrained encoder? | **done: the memory** (−0.33 at 270k) |
-| Horizon scaling (1 → 2 → 3 turns) | Does the memory's advantage grow with the lookahead horizon? | needs a three-turn labeller; cost to estimate |
+| Horizon scaling (1 → 2 → 3 turns) | Does the memory's advantage grow with the lookahead horizon? | **done: no** (memory ahead at every size and seed pair at 3 turns, −0.27 / −0.31 / −0.20; same size as at 1 and 2 turns) |
 | Own search leaf (memory vs control) | Can a value net learned from search labels replace Macondo's leaf, and does the memory help it? | **done: no** (+2.5 / +2.2 vs `mac` +8.5 / +10.0 agreement; memory no help) |
 | Search over the memory vs control net | Does the memory make the strongest system stronger? | no memory done (+2.0 ± 1.3 over its hybrid); memory arm lost to node failures, rerun ≈ 20 GPU-h undecided |
 | Strength per compute | Where does one forward pass sit on Macondo's simulation-time curve? | proposed, CPU jobs |
-| Rack inference with the memory | Can the memory read the opponent's rack from what they did not play, in one pass? | proposed |
+| Rack inference with the memory | Can the memory read the opponent's rack from what they did not play, in one pass? | **done at full data: yes, partly** (+0.52 vs +0.37 bits saved over the exact baseline, paired −0.15 ± 0.02; Macondo's rangefinder +0.94 softened / +0.21 raw); small-data runs on hold (memorise at 3k) |
 | Outcome-RL scaling test | Does the memory learn foresight from self-play outcomes faster as games grow (small scale only)? | idea; not planned |
 
 ## Venues (to check: deadlines, JUFO levels)
