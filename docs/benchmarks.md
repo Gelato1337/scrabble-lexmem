@@ -672,6 +672,31 @@ rangefinder does not assume it. A first version (match on HastyBot's single top 
 about 7 bits each (+1.74 mean); the 6 inspected were all top-equity ties. That run also lost 7 positions to a hang (each
 worker copied Macondo's config, which holds a lock; fixed with one shared config).
 
+**Planning with inference** (`eval/plan_infer.py`, `lumi/plan_infer.sh`, 2026-11-23). Does the inferred rack change the
+planning decision? The 3000 held-out positions from the side that moves next (board after HastyBot's play, our rack,
+scores); the one-turn exact planner (`go/lexmem_plan`: top 16 plays by score, 256 shared samples, PV = score − E_opp + E_my),
+the opponent's rack in each sample = kept tiles + a refill from the bag, the kept tiles drawn from: nothing known (uniform 7
+tiles: the planning benchmark's labels), the no-inference baseline, a net's prediction (the joint closest to the baseline with
+the net's per-tile marginals; mean worst-cell fit error 0.024–0.026, since a net's marginals need not be consistent with
+the kept count), the exact inversion's posterior, or the true kept tiles. Regret of each choice under the true kept tiles with
+independent samples (so "true" measures the sampling-noise floor). 14 minutes on 128 CPU cores.
+
+| Opponent's kept tiles from | Regret (points per decision) | Paired vs uniform |
+|---|---|---|
+| Top score (no planning) | 3.535 ± 0.107 | |
+| Uniform (the benchmark's labels) | 0.898 ± 0.048 | |
+| No-inference baseline | 0.897 ± 0.048 | −0.001 ± 0.032 |
+| Memory net, seeds 0 / 1 | 0.793 / 0.742 | −0.105 ± 0.042 / −0.156 ± 0.040 |
+| Same-start control, seeds 0 / 1 | 0.752 / 0.797 | −0.147 ± 0.039 / −0.101 ± 0.039 |
+| Exact inversion | 0.710 ± 0.036 | −0.188 ± 0.043 |
+| True kept tiles (perfect inference) | 0.231 ± 0.014 | −0.668 ± 0.049 |
+
+- Perfect knowledge of the kept tiles changes the planner's choice on 808 of 3000 positions (27 %) and is worth 0.67 points
+  per decision. What the play reveals recovers 28 % of that at best (exact inversion −0.19); the nets recover 19 % (−0.13 on
+  average), two thirds of the exact inversion.
+- The memory makes no difference here either: memory − control −0.006 ± 0.015 points (seed means; on the 808 changed
+  positions −0.045 ± 0.043).
+
 **HastyBot as an opponent (found 2026-11-23).** `lexmem_search` (`botMove`) and the Python harness (`HastyBot`: a CGP without
 the opponent's rack) put our rack in HastyBot's bag. While the bag has tiles HastyBot's static equity does not use the
 opponent's rack, but its pre-endgame adjustment is indexed by bag + 7 (`equity/preendgame.go`), so it is shifted by 7 tiles,

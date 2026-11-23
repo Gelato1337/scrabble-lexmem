@@ -319,7 +319,8 @@ in a row; see the end of round 6 in the benchmarks); reruns with the fix are und
 with the fix both rack-inference arms save about twice as much and the memory's lead is gone (memory +1.08, control +1.07 bits;
 paired −0.013 ± 0.006). Both now beat Macondo's rangefinder in every setting tried (memory − Macondo mixed with the baseline
 −0.21 ± 0.07 bits) and reach 52–53 % of the exact ceiling against a static HastyBot (every possible kept set checked by
-HastyBot's own move choice: +2.06 bits). Details:
+HastyBot's own move choice: +2.06 bits). In one-turn planning the inferred rack lowers regret by 0.13 points per decision
+(exact inversion 0.19, perfect knowledge 0.67), with no memory − control difference (−0.006 ± 0.015). Details:
 [docs/benchmarks.md](docs/benchmarks.md#round-6-2026-11-22-three-turns-and-rack-inference).
 
 ## Repository layout
