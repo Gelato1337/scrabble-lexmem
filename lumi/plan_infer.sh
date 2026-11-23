@@ -11,8 +11,7 @@
 source lumi/common.sh
 M=/scratch/project_462001611/macondo
 TAGS=${TAGS:-"lexinfer_fix_lex_all_s0 lexinfer_fix_lex_all_s1 lexinfer_fix_nolex_all_s0 lexinfer_fix_nolex_all_s1"}
-# exact inversion again, now with 256 posterior samples per position (go/lexmem_invert SAMPLES)
-(cd $M && SAMPLES=256 WORKERS=128 ./bin/lexmem_invert < $PROJ/data/inferpos_test.jsonl > $PROJ/data/inferinv_test_s.jsonl) || exit 1
+# the exact inversion's posterior samples: data/inferinv_test.jsonl from lumi/infer_exact.sh (submit with --dependency on it)
 TAGS="$TAGS" NPROC=126 python eval/plan_infer.py prep 3000 || exit 1
 plan() { (cd $M && LEXWORDS=$PROJ/data/lexwords.txt K=16 S=256 WORKERS=126 SEED0=${2:-0} ./bin/lexmem_plan < $PROJ/data/planinf_$1.jsonl > $PROJ/data/planinf_out_$3.jsonl) || exit 1; echo "labelled $3: $(wc -l < data/planinf_out_$3.jsonl)"; }
 for c in uniform base exact true $TAGS; do plan $c 0 $c; done

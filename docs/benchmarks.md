@@ -592,6 +592,21 @@ log-probabilities (last layer zero at the start, so an untrained net is the base
 (`QINIT=fut_train NO_XCHK=1`; lanes of the board before the move, P in the leave slot, U − P as unseen, plus one unit for
 the played move). All data = 40,000 steps of 64 (5.3 passes), seeds 0–1. Baseline: 11.142 bits.
 
+With the fixed sampler (`lexinfer_fix_*`, 2026-11-22; every batch distinct):
+
+| Training positions | Arm | Bits saved, seeds 0 / 1 | Paired memory − control (bits; negative = memory better) |
+|---|---|---|---|
+| 481k | same-start | +1.063 / +1.075 (± 0.036) | |
+| 481k | memory | +1.072 / +1.092 (± 0.036) | −0.013 ± 0.006 (seeds −0.008 ± 0.008, −0.017 ± 0.008) |
+
+- Both arms save about twice what they saved under the bug, and the memory arm's lead is gone: −0.013 ± 0.006 bits,
+  smaller than the spread between the memory arm's two seeds (0.020 ± 0.009). By bag before the move (1–20 / 21–40 / 41–60 /
+  61+): −0.015 / +0.003 / −0.042 / +0.000 bits, each ± 0.01.
+- Both arms are at +0.93 by step 4000 and gain 0.14 more by step 40,000, the last 8000 steps 0.01–0.02 as the cosine
+  schedule ends: a longer schedule would add a few hundredths to both arms, not separate them.
+
+Under the sampler bug (same settings; each batch trained on 28 times in a row):
+
 | Training positions | Arm | Bits saved, seeds 0 / 1 | Paired memory − control (bits; negative = memory better) |
 |---|---|---|---|
 | 481k | same-start | +0.347 / +0.395 (± 0.025) | |
@@ -616,17 +631,53 @@ simulations, imputes it for the leaves it does not measure, and refines over rou
 | Rangefinder, 20 s | +0.154 ± 0.176 | +0.688 | 46 | 17.4 s |
 | Budget 200, mixed 0.9 with the baseline | +0.939 ± 0.071 | +0.864 | 18 | |
 | Budget 200, mixed 0.8 with the baseline | +0.982 ± 0.060 | +0.837 | 7 | |
-| Memory net, mean of 2 seeds, same positions | +0.546 | | | one forward pass |
-| Same-start control, mean of 2 seeds | +0.393 | | | one forward pass |
+| Budget 200, refine rounds drawing from the prior (`PROPOSAL=prior`) | +0.204 ± 0.203 | +0.750 | 39 | 25.3 s |
+| Budget 200, temperature 0.3 (`TAU=0.3`) | +0.573 ± 0.062 | +0.498 | 6 | 24.6 s |
+| Exact inversion of a static HastyBot (below) | +2.147 ± 0.074 | +1.565 | 0 | 12.9 s, 1 core |
+| Memory net, fixed sampler, mean of 2 seeds | +1.143 | | | one forward pass |
+| Same-start control, fixed sampler, mean of 2 seeds | +1.130 | | | one forward pass |
+| Memory net, sampler bug, mean of 2 seeds | +0.546 | | | one forward pass |
+| Same-start control, sampler bug, mean of 2 seeds | +0.393 | | | one forward pass |
 
-Macondo's inference holds more information than our nets (median +0.82 bits), but on about 4 % of positions it gives the
-true kept tiles almost no probability, which costs its mean most of that. Mixed with the baseline (weights tried 0.5–0.95 on
-these same positions, all +0.77 to +0.98) it beats both nets: memory net − Macondo mixed 0.9 = +0.39 ± 0.07 bits, control
-+0.55 ± 0.07. Raw, it is level with them within its large error (memory − raw Macondo −0.34 ± 0.19). So the one-pass nets
-reach a bit over half of what a 25-second rangefinder search finds. Why Macondo rules out the true leave on those positions is not yet checked.
-Candidates: its likelihood models a simulating player while HastyBot is static; its own code notes that under the default proposal a
-leave whose imputed likelihood has collapsed has no route back (`rangefinder/refine.go`); the rebuild from a bare CGP. Cost:
-inference training 10.7 GPU-hours; rangefinder runs 2 × 24 min on 128 CPU cores.
+Macondo's inference has a higher median than its mean (+0.82 bits): on about 4 % of positions it gives the true kept tiles
+almost no probability. Under the sampler bug the nets reached about half of Macondo mixed with the baseline; with the fixed
+sampler both nets beat every rangefinder setting tried: memory net − Macondo = −0.93 ± 0.19 bits (budget 200), −0.21 ± 0.07
+(mixed 0.9 with the baseline), −0.57 ± 0.07 (temperature 0.3); the control is within 0.015 bits of the memory net in each.
+Why the rangefinder rules out the true leave: not its proposal (drawing refine rounds from the prior leaves the same 39-position
+tail), and not the rebuild from a bare CGP (the exact inversion uses the same rebuild and reproduces every play). A softer
+temperature removes most of the tail (39 → 6 positions) at the cost of the median (+0.50 instead of +0.82). This fits a
+likelihood that is too sharp for this opponent: the rangefinder scores a leave by how highly short simulations rank the
+observed play, at a pinned temperature (0.1 at bag ≤ 20), and HastyBot plays the top static-equity move. Cost: inference
+training 10.7 GPU-hours (each run, buggy and fixed); rangefinder runs 4 × 24 min on 128 CPU cores.
+
+**The information ceiling: exact inversion of a static HastyBot** (`go/lexmem_invert`, `lumi/infer_exact.sh`). For every
+possible kept set (every multiset of the true kept count from U − P: 9073 on average; positions with more than 400,000 skipped,
+3 of 3000), HastyBot (Macondo HASTY_BOT in process, our rack left as its opponent's rack as in the autoplay games that made the
+data) gets the rack P + kept set on the position before its play. Likelihood of the recorded play: 1/t if it is one of the t
+moves tied at the top equity, else 0 (ties broken uniformly; Macondo breaks them by generation order, and mirrored openings
+such as 8E / H5 tie exactly). Posterior ∝ baseline prior × likelihood. The true kept set reproduces the play on all 2997
+positions (196 through a tie); 1472 of the 9073 kept sets are consistent on average. 12.9 s per position on one core (median
+1.4 s); 11 minutes on 128 cores.
+
+| 2997 held-out positions | Bits saved | Median | Positions > 5 bits worse than baseline |
+|---|---|---|---|
+| Exact inversion | +2.057 ± 0.042 | +1.474 | 0 |
+| Memory net, fixed sampler, mean of 2 seeds | +1.082 | | |
+| Same-start control, fixed sampler, mean of 2 seeds | +1.069 | | |
+
+The nets recover 52–53 % of what the play reveals about a static HastyBot's rack (memory net by bag 1–20 / 21–40 / 41–60 / 61+:
+46 / 54 / 53 / 57 %). The ceiling knows the opponent's exact policy; the nets learn it from 481k examples, and Macondo's
+rangefinder does not assume it. A first version (match on HastyBot's single top move, our rack thrown into the bag as
+`lexmem_search` does; `data/inferinv_test_v1.jsonl`) reproduced the play on 2890 of 2990 positions, and the other 100 cost
+about 7 bits each (+1.74 mean); the 6 inspected were all top-equity ties. That run also lost 7 positions to a hang (each
+worker copied Macondo's config, which holds a lock; fixed with one shared config).
+
+**HastyBot as an opponent (found 2026-11-23).** `lexmem_search` (`botMove`) and the Python harness (`HastyBot`: a CGP without
+the opponent's rack) put our rack in HastyBot's bag. While the bag has tiles HastyBot's static equity does not use the
+opponent's rack, but its pre-endgame adjustment is indexed by bag + 7 (`equity/preendgame.go`), so it is shifted by 7 tiles,
+and once the real bag is empty HastyBot keeps valuing its leave instead of applying the endgame adjustment. The HastyBot of the
+autoplay games (the training data) had both racks in place. All game results against HastyBot are against this variant, both
+arms alike; the size of the difference is not measured. Not changed.
 
 **Sampler bug (found 2026-11-22).** `train_lexplan.py`, `train_lexvalue.py`, `train_lexinfer.py`, `train_td.py` and
 `train_v2.py` drew training positions from one `random.Random(seed)` held by the dataset object. Every DataLoader worker
@@ -640,4 +691,5 @@ policy nets (imitation, distillation, expert iteration: `lexmem/policy.py`, `lex
 `train_value.py`, `train_belief.py`, `train_branch.py`, `train/value_leaf.py`. Arms within a round used the same seeds and
 data, so they saw the same batches (the comparisons are paired), but absolute levels, data-size effects and step budgets are
 those of the repeated-batch regime. Fixed: one random stream per worker, as `train_future.py` does. The rack-inference
-all-data runs are repeated with the fix (`lexinfer_fix_*`); the planning-benchmark runs are not yet.
+all-data runs are repeated with the fix (`lexinfer_fix_*`, above: both arms double, the memory arm's lead disappears); the
+planning-benchmark runs are not yet.

@@ -47,8 +47,10 @@ the precondition for learning foresight from experience (self-play) instead of c
    - Two turns: memory 3.14 vs 3.47 critical regret at 270k against the same-start control (same pretrained, trained
      encoder; 3.56 against the clean control), better at every size and seed pair: the first full-data decision gain.
    - Three turns: memory 3.51 vs 3.70 at 270k, better at every size and seed pair; the gap does not grow with the horizon.
-   - Rack inference (a second use outside planning): memory saves 0.52 vs 0.37 bits per position over the exact
-     no-inference baseline; Macondo's 25-s rangefinder is the ceiling we know (+0.94 softened).
+   - Rack inference (a second use outside planning): with the fixed sampler memory and control both save ≈ 1.07 bits per
+     position over the exact no-inference baseline (no memory effect; 0.52 vs 0.37 under the sampler bug); both beat
+     Macondo's 25-s rangefinder (+0.94 at best, mixed with the baseline) and reach 52 % of the exact ceiling against a
+     static HastyBot (+2.06).
    - Dictionary transfer: smaller benchmark loss zero-shot on CSW24, not in games.
    Figs.: `lexplan_within_r2`, `lexplan_no_xchk`, `lexplan_clean_control`, `lexplan_capacity_matched`, `lexplan_two_turn`,
    `lexplan_csw_transfer`.
@@ -65,9 +67,9 @@ the precondition for learning foresight from experience (self-play) instead of c
 | Own search leaf (memory vs control) | Can a value net learned from search labels replace Macondo's leaf, and does the memory help it? | **done: no** (+2.5 / +2.2 vs `mac` +8.5 / +10.0 agreement; memory no help) |
 | Search over the memory vs control net | Does the memory make the strongest system stronger? | no memory done (+2.0 ± 1.3 over its hybrid); memory arm lost to node failures, rerun ≈ 20 GPU-h undecided |
 | Strength per compute | Where does one forward pass sit on Macondo's simulation-time curve? | proposed, CPU jobs |
-| Rack inference with the memory | Can the memory read the opponent's rack from what they did not play, in one pass? | **done at full data: yes, partly** (+0.52 vs +0.37 bits saved over the exact baseline, paired −0.15 ± 0.02; Macondo's rangefinder +0.94 softened / +0.21 raw); small-data runs on hold (memorise at 3k) |
+| Rack inference with the memory | Can the memory read the opponent's rack from what they did not play, in one pass? | **done at full data, fixed sampler: no memory effect** (+1.08 vs +1.07 bits saved over the exact baseline, paired −0.013 ± 0.006; under the bug +0.52 vs +0.37); both nets beat Macondo's rangefinder (+0.94 mixed / +0.57 at τ 0.3 / +0.21 raw) and reach 52 % of the exact static-HastyBot ceiling (+2.06); small-data runs on hold |
 | Planning benchmark with the fixed sampler | Do the memory-vs-control results (1–3 turns, 3k / 10k / 270k) hold when every batch is distinct? (Nov 22: all planning nets saw each batch 28× in a row) | needed before any claim; ≈ 36 GPU-h (memory + same-start, 3 horizons) to ≈ 46 (+ clean control) |
-| Planning with inference | Does the inferred rack change one-turn planning decisions, and does the memory's better inference carry over? | running (CPU; after the fixed inference nets) |
+| Planning with inference | Does the inferred rack change one-turn planning decisions, and does the memory's better inference carry over? | running (CPU job 23947554) |
 | Outcome-RL scaling test | Does the memory learn foresight from self-play outcomes faster as games grow (small scale only)? | idea; not planned |
 
 ## Venues (to check: deadlines, JUFO levels)

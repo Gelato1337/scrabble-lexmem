@@ -21,8 +21,10 @@ These live in our Macondo checkout on LUMI (`/scratch/project_462001611/macondo`
   per-tile marginals of the opponent's kept tiles: the reference for the rack-inference benchmark (`train/train_lexinfer.py`).
   Diagnostics: `PROPOSAL=prior|floor`, `TAU`.
 - `lexmem_invert/main.go` -> `cmd/lexmem_invert/`: exact rack inference against a static HastyBot: every possible kept set is
-  checked by HastyBot's own move choice; posterior marginals, whether the true kept set reproduces the play, and with `SAMPLES=k`
-  k posterior samples (`lumi/infer_exact.sh`).
+  checked by HastyBot's own move choice (likelihood 1/t when the recorded play is one of t moves tied at the top equity);
+  posterior marginals, whether the true kept set reproduces the play, and with `SAMPLES=k` k posterior samples
+  (`lumi/infer_exact.sh`). `OPPRACK=keep` (default) leaves our rack as HastyBot's opponent rack, as in the Macondo autoplay
+  games; `throw` puts it in the bag as `lexmem_search` does.
 - `macondo_patch/lexmem_accessor.go` -> `ai/bot/`: exposes the bot's Monte Carlo simmer (needed for `CANDS`).
 
 Build: `go build -o bin/<name> ./cmd/<name>` for lexmem_bot, lexmem_selfplay, lexmem_plan, lexmem_search, lexmem_infer, lexmem_invert (Go 1.23).

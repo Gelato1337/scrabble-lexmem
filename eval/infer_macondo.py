@@ -41,7 +41,8 @@ def analyze(tags):
     sv = R[:, 1] - R[:, 0]; print(f"  median saved {np.median(sv):+.3f}; positions > 5 bits worse than the baseline: {(sv < -5).sum()}")
     tm = [o for o in map(json.loads, open(f"data/{ref}.jsonl")) if "truematch" in o]
     if tm: print(f"  exact inversion: the true kept set reproduces the play in {sum(o['truematch'] for o in tm)} of {len(tm)} positions; "
-                 f"consistent kept sets {np.mean([o['nmatch'] for o in tm]):.0f} of {np.mean([o['n'] for o in tm]):.0f} on average")
+                 f"consistent kept sets {np.mean([o['nmatch'] for o in tm]):.0f} of {np.mean([o['n'] for o in tm]):.0f} on average"
+                 + (f"; the play is one of several top-equity ties in {sum(o['truematch'] and o['tietrue'] > 1 for o in tm)}" if all("tietrue" in o for o in tm) else ""))
     lifts = np.array([rows[i][4] for i in ks]); ok = lifts > -900
     print(f"  Macondo's own lift for the true leave (joint, log2 posterior/prior): mean {lifts[ok].mean():+.2f} bits on {ok.sum()} positions")
     for tag in tags:

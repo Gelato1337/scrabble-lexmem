@@ -3,15 +3,20 @@
 //   {"i":..,"cgp":"<position before the opponent's play: opponent on turn, its rack = the tiles it placed / our rack>",
 //    "coords":"8D","tiles":"WO.D","played":"WOD","leave":"AE?RS"}
 // For every possible kept set l (every multiset of the true kept count n from the tiles unseen to us minus the placed tiles P),
-// HastyBot (Macondo HASTY_BOT in-process, our rack thrown into the bag as in go/lexmem_search) gets the rack P + l on the
-// position before its play; l is consistent if HastyBot's move is the recorded play. Posterior over l ∝ prior(l) · consistent(l),
-// prior(l) ∝ Π_x C(U_x, P_x + l_x) (the exact no-inference baseline, U = the tiles unseen to us before the play).
+// HastyBot (Macondo HASTY_BOT in-process) gets the rack P + l on the position before its play. Likelihood of the recorded
+// play: HastyBot plays a top-equity move, ties broken uniformly: 1/t if the recorded play is one of the t moves tied at the
+// top equity, else 0 (Macondo breaks ties by generation order; mirrored openings such as 8E / H5 tie exactly).
+// Posterior over l ∝ prior(l) · likelihood(l), prior(l) ∝ Π_x C(U_x, P_x + l_x) (the exact no-inference baseline, U = the
+// tiles unseen to us before the play).
 // Output per line (fields as go/lexmem_infer, so eval/infer_macondo.py analyzes either): {"i","n": kept sets checked,
 // "complete","marg":[27][4] posterior P(kept count 0 / 1 / 2 / 3+) per tile in our order (A..Z, blank), "post": posterior of
-// the true kept set, "prior": its prior, "lift": log2(post/prior) (-999 if 0), "nmatch": consistent kept sets,
-// "truematch": the true kept set reproduces the play, "secs","err"}. No consistent kept set: marg = the prior, err set.
+// the true kept set, "prior": its prior, "lift": log2(post/prior) (-999 if 0), "nmatch": consistent kept sets (likelihood
+// > 0), "truematch": the true kept set reproduces the play (among the top-equity ties), "tietrue": moves tied at the top
+// equity with the true kept set, "secs","err"}. No consistent kept set: marg = the prior, err set.
 // Env: WORKERS (positions in parallel, default 8) MAXLEAVES (positions with more kept sets are skipped, default 400000)
 // SAMPLES (> 0: also "samples", that many kept sets drawn from the posterior, seeded by the position id; e.g. "AE?")
+// OPPRACK (keep: our rack stays HastyBot's opponent rack, as in the Macondo autoplay games; throw: thrown into the bag, as
+// go/lexmem_search plays live; default keep)
 package main
 
 import (
@@ -56,6 +61,7 @@ type Out struct {
 	Lift      float64        `json:"lift"`
 	NMatch    int            `json:"nmatch"`
 	TrueMatch bool           `json:"truematch"`
+	TieTrue   int            `json:"tietrue"`
 	Secs      float64        `json:"secs"`
 	Err       string         `json:"err,omitempty"`
 	Samples   []string       `json:"samples,omitempty"`
@@ -112,7 +118,9 @@ func countLeaves(pool [27]int, n int) int {
 	return c[n]
 }
 
-func invert(cfg *config.Config, conf *bot.BotConfig, x In, maxLeaves, nSamples int) (out Out) {
+const nTie = 16 // moves requested per check; the top-equity ties are counted among them
+
+func invert(cfg *config.Config, conf *bot.BotConfig, x In, maxLeaves, nSamples int, throwOpp bool) (out Out) {
 	out = Out{I: x.I, Lift: -999}
 	t0 := time.Now()
 	defer func() { out.Secs = time.Since(t0).Seconds() }()
@@ -153,14 +161,16 @@ func invert(cfg *config.Config, conf *bot.BotConfig, x In, maxLeaves, nSamples i
 		out.Err = "too many kept sets"
 		return out
 	}
-	g.ThrowRacksInFor(1 - hasty) // HastyBot does not see our rack (as go/lexmem_search's botMove)
+	if throwOpp {
+		g.ThrowRacksInFor(1 - hasty) // HastyBot does not see our rack (as go/lexmem_search's botMove)
+	}
 	tp, err := bot.NewBotTurnPlayerFromGame(g, conf, pb.BotRequest_HASTY_BOT)
 	if err != nil {
 		out.Err = err.Error()
 		return out
 	}
 	var prior, post [27][4]float64
-	zAll, zMatch, wTrue := 0.0, 0.0, 0.0
+	zAll, zMatch, wTrue, wTrueL := 0.0, 0.0, 0.0, 0.0 // wTrue: the true kept set's prior weight, wTrueL: prior x likelihood
 	var l [27]int
 	mls := make([]tilemapping.MachineLetter, 0, 7)
 	var keptL [][27]int
@@ -184,18 +194,31 @@ func invert(cfg *config.Config, conf *bot.BotConfig, x In, maxLeaves, nSamples i
 				out.Err = "set rack: " + err.Error()
 				return
 			}
-			match := strings.TrimSpace(tp.GenerateMoves(1)[0].ShortDescription()) == want
+			mv := tp.GenerateMoves(nTie)
+			top := math.Inf(-1)
+			for _, m := range mv {
+				top = math.Max(top, m.Equity())
+			}
+			tied, match := 0, false
+			for _, m := range mv {
+				if m.Equity() >= top-1e-6 {
+					tied++
+					match = match || strings.TrimSpace(m.ShortDescription()) == want
+				}
+			}
+			lik := 0.0
+			if match {
+				lik = 1 / float64(tied)
+			}
 			isTrue := l == trueL
 			zAll += w
 			for u := 0; u < 27; u++ {
 				k := min(l[u], 3)
 				prior[u][k] += w
-				if match {
-					post[u][k] += w
-				}
+				post[u][k] += w * lik
 			}
 			if match {
-				zMatch += w
+				zMatch += w * lik
 				out.NMatch++
 				if nSamples > 0 {
 					keptL = append(keptL, l)
@@ -203,8 +226,9 @@ func invert(cfg *config.Config, conf *bot.BotConfig, x In, maxLeaves, nSamples i
 				}
 			}
 			if isTrue {
-				wTrue = w
+				wTrue, wTrueL = w, w*lik
 				out.TrueMatch = match
+				out.TieTrue = tied
 			}
 			return
 		}
@@ -237,7 +261,7 @@ func invert(cfg *config.Config, conf *bot.BotConfig, x In, maxLeaves, nSamples i
 		}
 	}
 	if out.TrueMatch {
-		out.Post = wTrue / zMatch
+		out.Post = wTrueL / zMatch
 		out.Lift = math.Log2(out.Post / out.Prior)
 	}
 	if nSamples > 0 { // keptW holds the cumulative posterior weight
@@ -270,6 +294,10 @@ func main() {
 	cfg.Load(nil)
 	cfg.AdjustRelativePaths(filepath.Dir(ex))
 	W, maxLeaves, nSamples := envI("WORKERS", 8), envI("MAXLEAVES", 400000), envI("SAMPLES", 0)
+	throwOpp := os.Getenv("OPPRACK") == "throw"
+	// one bot config for all workers, built before they start: Config holds a lock, and a copy taken while another worker
+	// held it stays locked forever (7 workers hung on their first position this way, job 23942517)
+	conf := &bot.BotConfig{Config: *cfg}
 	in := make(chan In, 256)
 	outc := make(chan Out, 256)
 	var wg sync.WaitGroup
@@ -277,9 +305,8 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			conf := &bot.BotConfig{Config: *cfg}
 			for x := range in {
-				outc <- invert(cfg, conf, x, maxLeaves, nSamples)
+				outc <- invert(cfg, conf, x, maxLeaves, nSamples, throwOpp)
 			}
 		}()
 	}

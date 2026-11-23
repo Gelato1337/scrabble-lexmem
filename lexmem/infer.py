@@ -39,18 +39,28 @@ def _marg(G, n):
             if G[x, l] > 0: out[x, min(l, 3)] += G[x, l] * rest[n - l] / Z
     return out, pre
 
-def fit_tilt(U, P, n, target_logp, iters=30):
+def fit_tilt(U, P, n, target_logp, iters=30, cap=20.0, patience=3):
     """phi such that the tilted joint's per-tile marginals match exp(target_logp) (iterative proportional fitting, one tile at a
     time): of all joints over leaves of size n, the one closest to the baseline (KL) with those marginals. Returns phi and the
-    largest remaining absolute marginal error."""
-    T = np.exp(target_logp); phi = np.zeros((27, 4)); err = 0.0
+    largest remaining absolute marginal error.
+    A net's per-tile marginals need not be consistent with |leave| = n (their expected kept count can differ from n), and then
+    no joint matches them exactly: IPF stalls at the remaining error while phi drifts without bound (to overflow). So each
+    tile's phi is shifted to max 0 (a per-tile constant scales every leave alike and leaves the joint unchanged), clipped at
+    -cap, and the phi with the smallest error is returned once the error stops improving for `patience` sweeps."""
+    T = np.exp(target_logp); phi = np.zeros((27, 4)); best, besterr, stall = phi.copy(), np.inf, 0
     for _ in range(iters):
         for x in range(27):
             M, _ = _marg(_tilted_G(U, P, n, phi), n)
             ok = (M[x] > 1e-12) & (T[x] > 1e-12); phi[x, ok] += np.log(T[x, ok]) - np.log(M[x, ok])
+            phi[x] = np.clip(phi[x] - phi[x].max(), -cap, 0.0)
         M, _ = _marg(_tilted_G(U, P, n, phi), n); err = np.abs(M - T).max()
+        if not np.isfinite(err): break
+        if err < besterr - 1e-6: best, besterr, stall = phi.copy(), err, 0
+        else:
+            stall += 1
+            if stall >= patience: break
         if err < 1e-4: break
-    return phi, err
+    return best, besterr
 
 def sample_leaves(U, P, n, phi, k, rng):
     """k leaves (27-count vectors) drawn from the tilted joint (phi = 0: the exact baseline) by backward sampling over the DP."""

@@ -8,12 +8,12 @@ samples, PV = score - E_opp + E_my). Conditions differ only in the opponent's ra
   base      kept tiles drawn from the exact no-inference posterior (it held the placed tiles P) + refill
   <TAG>     kept tiles drawn from a rack-inference net's prediction (data/<TAG>_evlogp.npy): the joint closest to the baseline
             with the net's per-tile marginals (lexmem.infer.fit_tilt) + refill
-  exact     kept tiles drawn from the exact inversion of a static HastyBot (go/lexmem_invert SAMPLES=256) + refill
+  exact     kept tiles drawn from the exact inversion of a static HastyBot (go/lexmem_invert SAMPLES=256, lumi/infer_exact.sh) + refill
   true      the true kept tiles + refill (perfect inference); true_eval = the same with independent samples (SEED0)
 Regret of each condition's choice is measured under true_eval (PV with the true kept tiles, independent samples), so the
 "true" condition's regret is the sampling-noise floor.
 prep [N]            -> data/planinf_<cond>.jsonl (lexmem_plan input with "okeep"); env TAGS (net tags), EXACT (lexmem_invert
-                       output with samples, default data/inferinv_test_s.jsonl), NPROC
+                       output with samples, default data/inferinv_test.jsonl), NPROC
 analyze [cond ...]  <- data/planinf_out_<cond>.jsonl"""
 import os, sys, json, random, types, numpy as np
 from multiprocessing import Pool
@@ -52,7 +52,7 @@ def prep(npos):
     write("true", {i: [rs(TE["leave"][i])] for i in idx})
     write("base", {i: [rs(l) for l in sample_leaves(TE["U"][i].astype(int), TE["P"][i].astype(int), int(TE["leave"][i].sum()), np.zeros((27, 4)), S,
                                                     np.random.default_rng(i))] for i in idx})
-    ex = os.environ.get("EXACT", "data/inferinv_test_s.jsonl")
+    ex = os.environ.get("EXACT", "data/inferinv_test.jsonl")
     if os.path.exists(ex):
         E = {o["i"]: o.get("samples") for o in map(json.loads, open(ex))}
         miss = [i for i in idx if not E.get(i)]

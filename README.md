@@ -315,7 +315,11 @@ baseline (11.14 bits per position) the memory net trained on 481k positions save
 (paired −0.15 ± 0.02 bits, both seeds). Macondo's rangefinder (25 s per position) holds more (median 0.82 bits saved; +0.94
 once its ~4 % of overconfident misses are softened), so one forward pass gets a bit over half of it. **Caveat (Nov 22):** these
 nets, and every planning-benchmark net in findings 7–15 and 17, were trained with a sampler bug (each batch repeated 28 times
-in a row; see the end of round 6 in the benchmarks); reruns with the fix are under way for rack inference. Details:
+in a row; see the end of round 6 in the benchmarks); reruns with the fix are under way for rack inference. **Update (Nov 23):**
+with the fix both rack-inference arms save about twice as much and the memory's lead is gone (memory +1.08, control +1.07 bits;
+paired −0.013 ± 0.006). Both now beat Macondo's rangefinder in every setting tried (memory − Macondo mixed with the baseline
+−0.21 ± 0.07 bits) and reach 52–53 % of the exact ceiling against a static HastyBot (every possible kept set checked by
+HastyBot's own move choice: +2.06 bits). Details:
 [docs/benchmarks.md](docs/benchmarks.md#round-6-2026-11-22-three-turns-and-rack-inference).
 
 ## Repository layout
