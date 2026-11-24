@@ -701,8 +701,25 @@ independent samples (so "true" measures the sampling-noise floor). 14 minutes on
 the opponent's rack) put our rack in HastyBot's bag. While the bag has tiles HastyBot's static equity does not use the
 opponent's rack, but its pre-endgame adjustment is indexed by bag + 7 (`equity/preendgame.go`), so it is shifted by 7 tiles,
 and once the real bag is empty HastyBot keeps valuing its leave instead of applying the endgame adjustment. The HastyBot of the
-autoplay games (the training data) had both racks in place. All game results against HastyBot are against this variant, both
-arms alike; the size of the difference is not measured. Not changed.
+autoplay games (the training data) had both racks in place. All game results against HastyBot up to 2026-11-23 are against this
+variant, both arms alike.
+
+**Fixed 2026-11-24.** HastyBot now plays on the real game state in both places (`lexmem_search`: no throw-in; harness: both racks
+in the CGP for `HASTY_BOT`), as in the autoplay games; it reads the opponent's rack only once the bag is empty, when the rack is
+known from the unseen tiles (`equity/endgame.go`), so it learns nothing it could not deduce. `OPPRACK=throw` restores the old
+variant; bot code `HASTY_BOT_THROW` plays it for one side of `lexmem_search`. Measured (CPU job 23985493, 4000 games, seeds
+777000 + g, sides alternate the first move, paired by game index; 1597–1743 games identical):
+
+| Pairing | Win rate | Spread |
+|---|---|---|
+| fixed vs old HastyBot | 50.8 % ± 0.8 | +4.2 ± 1.6 |
+| fixed vs fixed / old vs old (same seeds) | 48.7 % / 48.9 % | −1.7 / −1.9 |
+| paired difference: fixed vs old − fixed vs fixed | **+2.25 ± 0.28** | **+5.9 ± 0.2** |
+| paired difference: fixed vs old − old vs old | **+2.03 ± 0.29** | **+6.1 ± 0.3** |
+
+The old variant is about 2 win-% (6 points per game) weaker head to head. Our win rates against HastyBot (net 53.2 %, hybrid
+58.1 %, search 60.1 %, planning policies) were measured against it and are probably a little high; memory-vs-control differences
+are paired against the same opponent. Not re-measured yet (needs the nets served on a GPU).
 
 **Sampler bug (found 2026-11-22).** `train_lexplan.py`, `train_lexvalue.py`, `train_lexinfer.py`, `train_td.py` and
 `train_v2.py` drew training positions from one `random.Random(seed)` held by the dataset object. Every DataLoader worker

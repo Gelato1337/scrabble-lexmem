@@ -4,8 +4,9 @@ These live in our Macondo checkout on LUMI (`/scratch/project_462001611/macondo`
 
 - `lexmem_bot/main.go` -> `cmd/lexmem_bot/`: plays any Macondo bot code; CGP per line in, `MOVE <play>` out (`CANDS=K` adds the sim's top-K candidates with win %). Used by `harness.py` (`MacondoBot`) and `label_bot.py`.
 - `lexmem_selfplay/main.go` -> `cmd/lexmem_selfplay/`: fast self-play; Macondo plays the rules, our net (served by `server_infer.py` on a GPU) picks the moves; optional shared-draw branch pairs.
-- `lexmem_search/main.go` -> `cmd/lexmem_search/`: whole games in Go vs a Macondo bot (HastyBot in-process, other bots in a pool of
-  `lexmem_bot` processes); our side = the net, a search over the net (top-K candidates x S shared worlds x D plies of net play,
+- `lexmem_search/main.go` -> `cmd/lexmem_search/`: whole games in Go vs a Macondo bot (HastyBot in-process on the real game state,
+  as in the autoplay games; `OPPRACK=throw` or bot code `HASTY_BOT_THROW` = the pre-2026-11-24 variant with our rack in its bag;
+  other bots in a pool of `lexmem_bot` processes); our side = the net, a search over the net (top-K candidates x S shared worlds x D plies of net play,
   win-% leaf), or a Macondo bot; optional Macondo handoff for the end of the game. Run by `lumi/search_eval.sh`; compare runs
   with `tools/search_games.py`. `POSITIONS=file.jsonl`: search single positions (CGPs) instead and write every candidate's
   playout value in every world (`eval/search_positions.py` prepares the positions and scores the choices against the teacher).
@@ -24,7 +25,7 @@ These live in our Macondo checkout on LUMI (`/scratch/project_462001611/macondo`
   checked by HastyBot's own move choice (likelihood 1/t when the recorded play is one of t moves tied at the top equity);
   posterior marginals, whether the true kept set reproduces the play, and with `SAMPLES=k` k posterior samples
   (`lumi/infer_exact.sh`). `OPPRACK=keep` (default) leaves our rack as HastyBot's opponent rack, as in the Macondo autoplay
-  games; `throw` puts it in the bag as `lexmem_search` does.
+  games; `throw` puts it in the bag (as `lexmem_search` and the harness did before 2026-11-24).
 - `macondo_patch/lexmem_accessor.go` -> `ai/bot/`: exposes the bot's Monte Carlo simmer (needed for `CANDS`).
 
 Build: `go build -o bin/<name> ./cmd/<name>` for lexmem_bot, lexmem_selfplay, lexmem_plan, lexmem_search, lexmem_infer, lexmem_invert (Go 1.23).

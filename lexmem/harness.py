@@ -1,6 +1,10 @@
 """
 Play games: our policy (Python engine, NWL23) vs HastyBot (Macondo shell as a subprocess).
 Game state is kept in Python; HastyBot receives the position as CGP and answers with its top-equity play.
+HastyBot (HASTY_BOT, either wrapper) gets both racks in the CGP, as in Macondo's autoplay, so its bag is the real bag (its
+pre-endgame adjustment and exchange limit see the true bag count; its endgame adjustment reads the opponent's rack only once the
+bag is empty, when it is known from the unseen tiles). OPPRACK=throw restores the behaviour before 2026-11-24 (opponent's rack in
+HastyBot's bag). Other Macondo bots get only the mover's rack.
 Usage: MACONDO=~/opt/macondo python -m lexmem.harness --games 4 --policy greedy
 """
 import os, sys, re, subprocess, time, random, argparse, numpy as np
@@ -8,6 +12,7 @@ from lexmem.core import *
 from lexmem.replay import parse_coord, score_placement, place
 
 MACONDO = os.environ.get("MACONDO", os.path.expanduser("~/opt/macondo"))
+HASTY_THROW = os.environ.get("OPPRACK") == "throw"
 ROW = re.compile(r"^\s*1:\s+(.*?)\s{2,}")
 
 class HastyBot:
@@ -29,8 +34,9 @@ class HastyBot:
             rows.append(s)
         rs = lambda r27: "".join("?" if t == BLANK else LET[t] for t in range(27) for _ in range(r27[t])) if r27 is not None else ""
         return f"{'/'.join(rows)} {rs(rack27)}/{rs(rack2)} {scores[0]}/{scores[1]} {zeros} lex {self.lexicon};"
-    def move(self, board, blanks, rack27, scores, zeros):
-        self.p.stdin.write(f"load cgp {self.cgp(board, blanks, rack27, scores, zeros)}\ngen 1\n"); self.p.stdin.flush()
+    def move(self, board, blanks, rack27, scores, zeros, opp_rack=None):
+        rack2 = None if HASTY_THROW else opp_rack
+        self.p.stdin.write(f"load cgp {self.cgp(board, blanks, rack27, scores, zeros, rack2=rack2)}\ngen 1\n"); self.p.stdin.flush()
         t0 = time.time()
         while True:
             line = self.p.stdout.readline()
@@ -60,14 +66,15 @@ class MacondoBot:
         self.code, self.secs, self.lexicon = code, secs, lexicon
         self.infer = "INFER" in code   # rack inference reads the opponent's last play: play_vs_hasty passes it as prev
     cgp = HastyBot.cgp
-    def move(self, board, blanks, rack27, scores, zeros, prev=None):
+    def move(self, board, blanks, rack27, scores, zeros, prev=None, opp_rack=None):
         hist = ""
+        rack2 = opp_rack if self.code == "HASTY_BOT" and not HASTY_THROW else None   # only HastyBot sees both racks (as in autoplay)
         if prev is not None:   # (board, blanks, played27, scores, zeros) before the opponent's last tile play + (r, c, d, letters)
             pb_, pbl, played, psc, pz, r, c, d, letters = prev
             col = "ABCDEFGHIJKLMNO"[c]
             hist = "\t" + "\t".join([self.cgp(pb_, pbl, played, psc, pz, rack2=rack27), f"{r + 1}{col}" if d == 0 else f"{col}{r + 1}", letters,
                                       "".join("?" if t == BLANK else LET[t] for t in range(27) for _ in range(played[t]))])
-        self.p.stdin.write(f"{self.code} {self.secs} {self.cgp(board, blanks, rack27, scores, zeros)}{hist}\n"); self.p.stdin.flush()
+        self.p.stdin.write(f"{self.code} {self.secs} {self.cgp(board, blanks, rack27, scores, zeros, rack2=rack2)}{hist}\n"); self.p.stdin.flush()
         line = self.p.stdout.readline()
         if not line: raise RuntimeError(f"lexmem_bot died on: {self.code} {self.secs} {self.cgp(board, blanks, rack27, scores, zeros)}")
         self.last_cands = []
@@ -109,7 +116,8 @@ def play_vs_hasty(lex, policy, hasty, seed, we_first):
         if me == us:
             cc = cross_checks(lex, board, blanks)
             if getattr(policy, "wants_state", False):   # a Macondo bot on our side: answers with a play string
-                mv = policy.move(board, blanks, rack, (scores[me], scores[1 - me]), zeros)
+                kw = {"opp_rack": racks[1 - me]} if getattr(policy, "code", None) == "HASTY_BOT" else {}   # HastyBot on our side: both racks too
+                mv = policy.move(board, blanks, rack, (scores[me], scores[1 - me]), zeros, **kw)
             else:
                 mv = policy(lex, board, blanks, cc, rack, counts27(bag) + racks[1 - me], rng)
             if mv is None: action = "(Pass)"
@@ -121,7 +129,7 @@ def play_vs_hasty(lex, policy, hasty, seed, we_first):
                 action = (r, c, d, out)
         else:
             if prev is not None and getattr(hasty, "infer", False): play = hasty.move(board, blanks, rack, (scores[me], scores[1 - me]), zeros, prev=prev)
-            else: play = hasty.move(board, blanks, rack, (scores[me], scores[1 - me]), zeros)
+            else: play = hasty.move(board, blanks, rack, (scores[me], scores[1 - me]), zeros, opp_rack=racks[us])
             prev = None
             action = macondo_play_to_letters(play)
             if action is None:

@@ -14,10 +14,15 @@
 // only if its mean paired (same-world) difference exceeds Z standard errors (Z=0: plain argmax). PM caps the playout move list
 // (top PM plays by score; the root always uses MAXM). REC=1 stores each search decision (position, candidates, estimates).
 //
-// Macondo bots: HASTY_BOT runs in-process (static, no solver); other codes (SIMMING_BOT, ...) run in a pool of NBOT
+// Macondo bots: HASTY_BOT runs in-process (static, no solver) on the real game state, as in Macondo's autoplay: the bag holds
+// only the bag tiles (its pre-endgame adjustment and exchange limit see the true bag count) and, once the bag is empty, its
+// endgame adjustment sees the opponent's rack (known from the unseen tiles then; earlier only the bag count is read).
+// OPPRACK=throw restores the behaviour before 2026-11-24: the opponent's rack thrown into HastyBot's bag (bag count + 7, no
+// endgame adjustment until the opponent's rack is empty); the code HASTY_BOT_THROW does the same for one side only (OURS or OPP),
+// to measure what the change does to HastyBot's strength. Other codes (SIMMING_BOT, ...) run in a pool of NBOT
 // bin/lexmem_bot processes (each its own GOMEMLIMIT, like the Python harness), fed a CGP with only the mover's rack.
 //
-// Env: SOCK LEXWORDS MACONDO NGAMES SEED CONC BATCH OUT EXCH OURS OURS_SECS OPP OPP_SECS HANDOFF EG_SECS NBOT
+// Env: SOCK LEXWORDS MACONDO NGAMES SEED CONC BATCH OUT EXCH OURS OURS_SECS OPP OPP_SECS HANDOFF EG_SECS NBOT OPPRACK
 //      K S D LEAF PM Z REC PAR (max playouts in flight, default 4096) POSITIONS POS0 NPOS (positions mode, see runPositions) TRAJ (per-turn records); OPP=net: self-play
 // Game g (0-based, G0 .. G0+NGAMES-1): seed SEED+g; our side moves first when g is even. Output: one JSON line per game.
 package main
@@ -342,6 +347,7 @@ var (
 	cl      *Client
 	pool    chan *BotProc
 	hastyConf *bot.BotConfig // built once: Config holds a lock and must not be copied per move
+	hastyThrow bool          // OPPRACK=throw: the opponent's rack goes into HastyBot's bag (behaviour before 2026-11-24)
 )
 
 func newGen(g *game.Game) *movegen.GordonGenerator {
@@ -433,9 +439,11 @@ func toCGP(g *game.Game) string {
 
 // the move a Macondo bot plays for the player on turn
 func botMove(g *game.Game, gen *movegen.GordonGenerator, code string, secs float64) *move.Move {
-	if code == "HASTY_BOT" {
+	if code == "HASTY_BOT" || code == "HASTY_BOT_THROW" {
 		gc := g.Copy()
-		gc.ThrowRacksInFor(1 - gc.PlayerOnTurn())
+		if hastyThrow || code == "HASTY_BOT_THROW" {
+			gc.ThrowRacksInFor(1 - gc.PlayerOnTurn())
+		}
 		tp, err := bot.NewBotTurnPlayerFromGame(gc, hastyConf, pb.BotRequest_HASTY_BOT)
 		if err != nil {
 			panic(err)
@@ -926,6 +934,7 @@ func main() {
 	}
 	winpcts = wp.([][]float32)
 	hastyConf = &bot.BotConfig{Config: *cfg}
+	hastyThrow = os.Getenv("OPPRACK") == "throw"
 	leaves, err = equity.NewCombinedStaticCalculator("NWL23", cfg, "", "")
 	if err != nil {
 		panic(err)
@@ -935,7 +944,8 @@ func main() {
 	if needNet {
 		cl = NewClient(os.Getenv("SOCK"), envI("BATCH", 512))
 	}
-	needPool := (st.Opp != "HASTY_BOT" && st.Opp != "net") || (st.Ours != "net" && st.Ours != "search" && st.Ours != "HASTY_BOT") || (needNet && st.Handoff > 0)
+	needPool := (st.Opp != "HASTY_BOT" && st.Opp != "HASTY_BOT_THROW" && st.Opp != "net") ||
+		(st.Ours != "net" && st.Ours != "search" && st.Ours != "HASTY_BOT" && st.Ours != "HASTY_BOT_THROW") || (needNet && st.Handoff > 0)
 	if needPool {
 		nb := envI("NBOT", 24)
 		pool = make(chan *BotProc, nb)
