@@ -768,3 +768,38 @@ points under PV / PV2 / PV3, seeds 0 / 1; "bug" = the same cell in rounds 4 and 
 - Size in play: about 0.05 points of regret per decision at full data (all positions), below 1 point per game.
 - One-turn labels are the round-2 labels (`plan_v1.pkl`, with the labeller's endgame bug of round 3), as in round 4; two and
   three turns use the corrected labeller.
+
+**Rack modelling inside Macondo's simulator, position level** (`go/lexmem_simrack`, `eval/sim_infer.py`, `lumi/sim_infer.sh`;
+CPU job 24004950, 72 core-h). Does knowing or inferring the opponent's kept tiles change what the full-strength simulator plays,
+and is the change better? The 3000 rack-inference held-out positions from the side of the player who moves next (after
+HastyBot's tile play; the positions and kept-tile samples of the planning-with-inference test). Decision: SIMMING_BOT's own
+simulation (`ai/bot` `LexmemSim` = the set-up of `nonEndgameBest`: top 100 plays by static equity, 2 plies, or the number of
+unseen tiles when 9–14 are unseen, Stop99, one thread, at most 10 s); the arms differ only in the opponent's rack in each
+iteration (Macondo's complete-posterior mode: kept tiles from the source + a refill from the bag) or in the time limit. Value of
+a choice: the same simulation with the true kept tiles + refill, 6000 iterations per play, nothing pruned, on the plays any arm
+chose (the plays of a position share every iteration's rack and bag order). 186 positions have at most 8 unseen tiles: the
+bot's solvers play them and no rack is sampled; the other 2814 are below. Paired against the first row; win-% is the
+simulator's win probability of the chosen play.
+
+| Opponent's rack in the simulation | Time used | Win-% vs uniform 10 s | Equity vs uniform 10 s | Other play than uniform 10 s |
+|---|---|---|---|---|
+| Uniform from the unseen tiles, 10 s (SIMMING_BOT as it is) | 8.0 s | (53.69 %) | (+36.95) | |
+| Uniform, 10 s, second run (noise floor) | 8.0 s | −0.030 ± 0.022 | −0.05 ± 0.05 | 15.9 % |
+| Uniform, 3 s | 3.0 s | −0.244 ± 0.032 | −0.55 ± 0.09 | 26.7 % |
+| Uniform, 30 s | 12.1 s | +0.050 ± 0.020 | +0.16 ± 0.05 | 12.9 % |
+| Exact inversion of HastyBot's last play, 10 s | 8.0 s | +0.058 ± 0.021 | +0.15 ± 0.07 | 20.5 % |
+| Memory nets (seeds 0 / 1), 10 s | 8.0 s | +0.020 ± 0.024 / +0.038 ± 0.023 | +0.10 / +0.14 | 18.6 % / 19.3 % |
+| Control nets (seeds 0 / 1), 10 s | 8.0 s | +0.017 ± 0.021 / +0.042 ± 0.022 | −0.02 / +0.14 | 18.1 % / 19.0 % |
+| **True kept tiles, 10 s** (perfect inference) | 7.7 s | **+0.372 ± 0.033** | **+0.81 ± 0.08** | 29.7 % |
+
+- Knowing the kept tiles is worth 0.37 win-% per decision to the simulator. With about 11 such decisions per game (our moves
+  after an opponent tile play, before the solver stage) that is roughly 4 win-% per game: an upper bound no inference reaches.
+- One observed move recovers little of it: the exact inversion 16 % (+0.058), our nets about 8 % (+0.03 on average), roughly
+  +0.6 and +0.3 win-% per game. In the one-turn planner the shares were 28 % and 19 %; the equity gains agree in size
+  (true +0.81 here, 0.67 there; exact +0.15, 0.19; nets about +0.09, 0.13).
+- Memory − control (seed means): 0.000 ± 0.013 win-%.
+- Time: the stopping rule ends most simulations before the limit (8.0 s of 10, 12.1 s of 30). Three times the limit gains
+  +0.050, as much as the exact inversion; a 3 s limit loses 0.244.
+- Per-game figures are per-decision gains times the number of decisions, not played games: 4000 paired games resolve about
+  ±0.9 win-%, more than every effect here except perfect knowledge.
+
