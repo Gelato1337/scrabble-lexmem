@@ -734,4 +734,37 @@ policy nets (imitation, distillation, expert iteration: `lexmem/policy.py`, `lex
 data, so they saw the same batches (the comparisons are paired), but absolute levels, data-size effects and step budgets are
 those of the repeated-batch regime. Fixed: one random stream per worker, as `train_future.py` does. The rack-inference
 all-data runs are repeated with the fix (`lexinfer_fix_*`, above: both arms double, the memory arm's lead disappears); the
-planning-benchmark runs are not yet.
+planning-benchmark runs are repeated in round 7 below.
+
+## Round 7 (2026-11-24): the planning benchmark with the fixed sampler
+
+The capacity-matched comparison of rounds 4 and 6 repeated with one random stream per DataLoader worker (every batch
+distinct), nothing else changed: memory (`ARM=lex`) vs same-start control (`ARM=nolex`), both `QINIT=fut_train NO_XCHK=1`,
+one / two / three turns (`data/plan_v1.pkl` round-2 labels, `plan_h2.pkl`, `plan_h3.pkl`), 3k / 10k / all positions with the
+old step budgets (4000 / 8000 / 40000 steps of 64), seeds 0–1, 28 workers. Tags `lexplanfix_h{1,2,3}ft_{lex,nolex}_*`, jobs
+23984832–68, 40 GPU-h. Last evaluation of each run, about 3000 held-out positions (743–757 critical). Critical regret in
+points under PV / PV2 / PV3, seeds 0 / 1; "bug" = the same cell in rounds 4 and 6.
+
+| Turns | Training positions | Memory | Same-start control | Memory − control (per seed) | Bug: memory − control | Regret all: memory / control | R² E_opp within: memory / control |
+|---|---|---|---|---|---|---|---|
+| 1 | 3k | 3.55 / 3.62 | 3.48 / 3.55 | +0.07 (+0.07, +0.07) | −0.30 | 1.60 / 1.57 | 0.27 / 0.22 |
+| 1 | 10k | 3.41 / 3.48 | 3.39 / 3.41 | +0.04 (+0.02, +0.07) | −0.24 | 1.52 / 1.50 | 0.33 / 0.27 |
+| 1 | all | 2.82 / 2.90 | 2.96 / 3.12 | **−0.18** (−0.14, −0.22) | −0.17 | 1.30 / 1.35 | 0.49 / 0.45 |
+| 2 | 3k | 3.38 / 3.44 | 3.49 / 3.41 | −0.04 (−0.11, +0.03) | −0.41 | 1.53 / 1.56 | 0.31 / 0.23 |
+| 2 | 10k | 2.98 / 3.08 | 3.13 / 3.06 | −0.06 (−0.15, +0.02) | −0.14 | 1.40 / 1.39 | 0.38 / 0.31 |
+| 2 | all | 2.50 / 2.47 | 2.56 / 2.58 | **−0.08** (−0.06, −0.11) | −0.33 | 1.10 / 1.15 | 0.54 / 0.49 |
+| 3 | 3k | 3.58 / 3.47 | 3.78 / 3.73 | **−0.23** (−0.20, −0.26) | −0.27 | 1.91 / 2.04 | 0.31 / 0.21 |
+| 3 | 10k | 3.11 / 3.21 | 3.27 / 3.39 | **−0.17** (−0.16, −0.18) | −0.31 | 1.74 / 1.79 | 0.37 / 0.31 |
+| 3 | all | 2.77 / 2.69 | 2.83 / 2.83 | **−0.10** (−0.06, −0.14) | −0.20 | 1.44 / 1.50 | 0.54 / 0.49 |
+
+- Both arms are far better than under the bug at every size (two turns, all data: 2.5–2.6 against 3.1–3.5); 3k positions with
+  distinct batches beat the bug-era all-data runs on one turn (3.5–3.6 against 3.7–4.6).
+- The memory's advantage is about half its bug-era size. It remains at full data on all three horizons (−0.18 / −0.08 / −0.10,
+  all six seed pairs) and at three turns at every size; at 3k and 10k positions on one and two turns it is gone (one turn: the
+  memory arm is 0.04–0.07 behind in both seeds). The "learns planning from far less data" reading of rounds 2–4 does not hold
+  for one and two turns.
+- The memory arm ranks the opponent's threat better in all nine cells (within-position R² of E_opp +0.04 to +0.10).
+- Two seeds and no per-position error bars: single cells are within plausible noise; the evidence is the pattern across cells.
+- Size in play: about 0.05 points of regret per decision at full data (all positions), below 1 point per game.
+- One-turn labels are the round-2 labels (`plan_v1.pkl`, with the labeller's endgame bug of round 3), as in round 4; two and
+  three turns use the corrected labeller.
