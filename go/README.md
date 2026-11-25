@@ -26,6 +26,12 @@ These live in our Macondo checkout on LUMI (`/scratch/project_462001611/macondo`
   posterior marginals, whether the true kept set reproduces the play, and with `SAMPLES=k` k posterior samples
   (`lumi/infer_exact.sh`). `OPPRACK=keep` (default) leaves our rack as HastyBot's opponent rack, as in the Macondo autoplay
   games; `throw` puts it in the bag (as `lexmem_search` and the harness did before 2026-11-24).
+- `lexmem_track/main.go` -> `cmd/lexmem_track/`: exact tracking of the opponent's rack over the whole move history against a
+  static HastyBot: after every move of the opponent a weight for each kept set it can hold; its draw, our own draws and its
+  next move (HastyBot's own choice with every rack it can hold) update the weights. Plays use `lexmem_invert`'s likelihood
+  (1/t among top-equity ties); an exchange shows only the number of tiles. Macondo's top-play generator rejects most racks
+  before the full move list is needed (`FAST=0` switches that off). `HIST=k` uses the last k moves only (`HIST=1` =
+  `lexmem_invert`, except after our own exchange on the first turn: see the file header). Output as `lexmem_invert` plus tracking diagnostics (`eval/track_infer.py`, `lumi/track_infer.sh`).
 - `lexmem_simrack/main.go` -> `cmd/lexmem_simrack/`: SIMMING_BOT's own simulation of a position with the opponent's rack from a
   chosen source: uniform (the bot as it is), kept-tile samples of an inference method, or the true kept tiles (`okeep`, the
   input files of `eval/plan_infer.py`); `MODE=eval` scores given plays with a fixed number of iterations and no pruning.
@@ -33,4 +39,4 @@ These live in our Macondo checkout on LUMI (`/scratch/project_462001611/macondo`
 - `macondo_patch/lexmem_accessor.go` -> `ai/bot/`: exposes the bot's Monte Carlo simmer (needed for `CANDS`), and `LexmemSim`:
   the simulation set-up of `nonEndgameBest` with optional inferred opponent leaves (for `lexmem_simrack`).
 
-Build: `go build -o bin/<name> ./cmd/<name>` for lexmem_bot, lexmem_selfplay, lexmem_plan, lexmem_search, lexmem_infer, lexmem_invert, lexmem_simrack (Go 1.23).
+Build: `go build -o bin/<name> ./cmd/<name>` for lexmem_bot, lexmem_selfplay, lexmem_plan, lexmem_search, lexmem_infer, lexmem_invert, lexmem_track, lexmem_simrack (Go 1.23).

@@ -803,3 +803,49 @@ simulator's win probability of the chosen play.
 - Per-game figures are per-decision gains times the number of decisions, not played games: 4000 paired games resolve about
   ±0.9 win-%, more than every effect here except perfect knowledge.
 
+**Rack tracking over the whole move history** (`go/lexmem_track`, `eval/track_infer.py`, `lumi/track_infer.sh`; CPU job
+24020516, 82 core-h; smoke 24015621, 20 core-h). The exact inversion above reads HastyBot's last play only, and tiles it kept
+on earlier turns are still on its rack. How much more does exact tracking over all of its moves recover? The same 3000
+positions; the history is the position's game from its first turn: 5.7 moves of the opponent on average (1 to 13), 17,102 in
+all, 217 of them exchanges. After each of its moves the tracker holds a weight for every kept set it can have. Its draw from the
+bag, our own draws (what we drew is not on its rack) and its next move update the weights: every rack it can hold then is
+put to HastyBot (546 M racks for the whole history). A play counts as in the one-move inversion (1/t when it is one of t moves
+tied at the top equity); of an exchange only the number of tiles is seen, so all 7-tile racks are put to HastyBot (2.1 M per
+exchange on average). Runs with the last 1, 2 and 4 moves start from the no-inference prior at that move.
+
+Kept tiles after the last play, 2997 positions (3 are over the one-move tool's size limit); bits = log-loss of the true kept
+counts summed over the 27 tiles, as in the rack-inference benchmark; the no-inference baseline is 11.135 bits:
+
+| Moves of the opponent used | Bits saved | More than the last move alone | Joint lift of the true kept set | Consistent kept sets (of 8598) |
+|---|---|---|---|---|
+| Last move (the exact inversion above) | 2.057 ± 0.042 | | 2.82 bits | 1474 |
+| Last 2 moves | 2.416 ± 0.047 | +0.359 ± 0.022 | 3.14 | 1266 |
+| Last 4 moves | 2.517 ± 0.049 | +0.460 ± 0.026 | 3.22 | 1234 |
+| **Whole history** | **2.519 ± 0.049** | **+0.463 ± 0.026** | 3.22 | 1234 |
+
+Inside the simulator: one new arm of the test above (kept tiles from the whole-history posterior, 256 samples, 10 s), all arms
+evaluated again together under the true kept tiles (6000 iterations per play; the earlier arms moved by at most 0.005 win-%;
+the first evaluation is kept as `data/simrack_eval_v1.jsonl`). 2814 simulated positions:
+
+| Opponent's rack in the simulation | Win-% vs uniform 10 s | Equity vs uniform 10 s | Win-% vs the last move alone |
+|---|---|---|---|
+| Exact inversion of HastyBot's last play | +0.059 ± 0.022 | +0.15 ± 0.07 | |
+| **Exact tracking over the whole history** | **+0.069 ± 0.025** | +0.17 ± 0.06 | **+0.010 ± 0.020** |
+| True kept tiles | +0.367 ± 0.033 | +0.81 ± 0.08 | +0.308 ± 0.028 |
+
+- The history adds 0.46 bits to the 2.06 of the last move. All of it comes from the last 4 moves and 78 % from the last 2;
+  moves further back add nothing (+0.002).
+- Exact tracking with a perfectly known opponent still leaves 8.6 of the 11.1 bits. The gain does not grow with the length of
+  the history: +0.44 bits at 2 moves, +0.53 at 3–4, +0.43 at 5–6, +0.53 at 7–9, +0.65 at 10 or more.
+- In the simulator the whole history is not measurably better than the last move: +0.010 ± 0.020 win-% per decision. It
+  reaches 19 % of the value of the true kept tiles (16 % for the last move), about 0.8 win-% per game at 11 decisions.
+- So the gap between knowing the kept tiles (+0.37) and inferring them (+0.06) is not history that the one-move methods
+  ignore: HastyBot's moves do not determine what it keeps. A learned tracker has at most this ceiling against HastyBot.
+- Checks. The true rack kept its weight in every position and every run; no step was skipped. With the last move only the
+  tool gives the one-move inversion's posterior and samples exactly on 2989 of the 2997 positions. The other 8 are the
+  opponent's opening play right after our own exchange on the first turn: that one move is the whole history, and the tracker
+  knows the tiles we put back are not on its rack (jobs 24028341, 24028450: the one-move tool reproduces its stored output;
+  the tracker with and without the top-play filter agrees on these 8 and on 24 whole-history positions).
+- Speed: Macondo's top-play generator (the function its autoplay uses for HastyBot) rejects a rack when some move beats the
+  recorded play; only the rest (5 % of the racks) go to the full move list.
+
