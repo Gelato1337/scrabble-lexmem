@@ -9,11 +9,13 @@ Value of a choice: the same simulation with the true kept tiles + refill, a fixe
 Reported per arm: the win probability and equity of its choice under that evaluation, paired against the base arm.
 Positions with at most 8 unseen tiles are not simulated by SIMMING_BOT (solver stage): no difference between arms there;
 they count as zeros in the "all positions" column.
-prep-eval ARM ...   data/<PREFIX>_<arm>.jsonl -> data/<PREFIX>_evalin.jsonl
-analyze ARM ...     <- data/<PREFIX>_eval.jsonl; the first arm is the base. Env PREFIX (default simrack).
+prep-eval ARM ...   data/<PREFIX>_<arm>.jsonl -> data/<PREFIX>_evalin<EVAL>.jsonl
+analyze ARM ...     <- data/<PREFIX>_eval<EVAL>.jsonl; the first arm is the base. Env PREFIX (default simrack), EVAL (a suffix
+                    that names another evaluation of the same arms, e.g. _end: rollouts to the end of the game,
+                    lumi/sim_depth.sh; default none).
 Stdlib only (runs with /usr/bin/python3)."""
 import os, sys, json, math
-D = "data/"; PRE = os.environ.get("PREFIX", "simrack")
+D = "data/"; PRE = os.environ.get("PREFIX", "simrack"); EV = os.environ.get("EVAL", "")
 
 def load(arm):
     return {o["id"]: o for o in map(json.loads, open("%s%s_%s.jsonl" % (D, PRE, arm)))}
@@ -24,16 +26,16 @@ def ms(v):   # mean, standard error
 
 def prep(arms):
     A = {a: load(a) for a in arms}; n = 0
-    with open("%s%s_evalin.jsonl" % (D, PRE), "w") as f:
+    with open("%s%s_evalin%s.jsonl" % (D, PRE, EV), "w") as f:
         for t in map(json.loads, open(D + "planinf_true.jsonl")):
             i = t["id"]; plays = sorted({A[a][i]["best"] for a in arms if i in A[a] and A[a][i].get("best")})
             if not plays: continue
             f.write(json.dumps(dict(id=i, cgp=t["cgp"], okeep=t["okeep"], plays=plays)) + "\n"); n += 1
-    print("%d positions with a simulated choice -> %s%s_evalin.jsonl" % (n, D, PRE), flush=True)
+    print("%d positions with a simulated choice -> %s%s_evalin%s.jsonl" % (n, D, PRE, EV), flush=True)
 
 def analyze(arms):
     A = {a: load(a) for a in arms}; base = arms[0]
-    E = {o["id"]: {c["p"]: c for c in o.get("cands", [])} for o in map(json.loads, open("%s%s_eval.jsonl" % (D, PRE))) if not o.get("err")}
+    E = {o["id"]: {c["p"]: c for c in o.get("cands", [])} for o in map(json.loads, open("%s%s_eval%s.jsonl" % (D, PRE, EV))) if not o.get("err")}
     ids = sorted(set.intersection(*[set(A[a]) for a in arms]))
     err = [i for i in ids if any(A[a][i].get("err") for a in arms)]
     solver = [i for i in ids if i not in err and all(A[a][i]["plies"] == 0 for a in arms)]

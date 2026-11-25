@@ -25,6 +25,9 @@
 // Env: SOCK LEXWORDS MACONDO NGAMES SEED CONC BATCH OUT EXCH OURS OURS_SECS OPP OPP_SECS HANDOFF EG_SECS NBOT OPPRACK
 //      K S D LEAF PM Z REC PAR (max playouts in flight, default 4096) POSITIONS POS0 NPOS (positions mode, see runPositions) TRAJ (per-turn records); OPP=net: self-play
 // Game g (0-based, G0 .. G0+NGAMES-1): seed SEED+g; our side moves first when g is even. Output: one JSON line per game.
+// START=file.jsonl (lines {"i", "cgp"}: a position with both racks, our side on turn; POS0 / NPOS = a slice): each position is
+// played from there to the end of the game instead (bag draws seeded by SEED+i); one line per position, "g" = i.
+// BOT_ERR=file: the stderr of the lexmem_bot processes (FALLBACK and PEG lines) is appended there.
 package main
 
 import (
@@ -348,6 +351,7 @@ var (
 	pool    chan *BotProc
 	hastyConf *bot.BotConfig // built once: Config holds a lock and must not be copied per move
 	hastyThrow bool          // OPPRACK=throw: the opponent's rack goes into HastyBot's bag (behaviour before 2026-11-24)
+	botErr     *os.File      // BOT_ERR: where the bot processes' stderr goes (nil: dropped)
 )
 
 func newGen(g *game.Game) *movegen.GordonGenerator {
@@ -382,6 +386,9 @@ func startBot(macondo string) *BotProc {
 	cmd.Dir = macondo
 	cmd.Env = append(os.Environ(), "GOMAXPROCS=2", "SIM_THREADS=1", "GOMEMLIMIT="+envS("BOT_MEM", "2GiB"))
 	cmd.Stderr = nil
+	if botErr != nil {
+		cmd.Stderr = botErr
+	}
 	wi, err := cmd.StdinPipe()
 	if err != nil {
 		panic(err)
@@ -738,7 +745,12 @@ func playGame(g *game.Game, gen *movegen.GordonGenerator, st *Setup, gi int, see
 	if gi%2 == 1 {
 		us = 1 - us
 	}
-	rec := GameRec{G: gi, Seed: seed, First: gi%2 == 0}
+	return playOut(g, gen, st, gi, seed, us, gi%2 == 0)
+}
+
+// playOut: the game from g's position to its end; us = our player
+func playOut(g *game.Game, gen *movegen.GordonGenerator, st *Setup, gi int, seed int64, us int, first bool) GameRec {
+	rec := GameRec{G: gi, Seed: seed, First: first}
 	rng := rand.New(rand.NewSource(seed*7919 + 17))
 	turn := 0
 	for g.Playing() != pb.PlayState_GAME_OVER && turn < 100 {
@@ -799,6 +811,74 @@ func playGame(g *game.Game, gen *movegen.GordonGenerator, st *Setup, gi int, see
 	rec.Final = [2]int{g.PointsFor(us), g.PointsFor(1 - us)}
 	rec.Spread = rec.Final[0] - rec.Final[1]
 	return rec
+}
+
+// ---- start-position mode (START): every position of the file played to the end of the game
+func runStarts(path string, st *Setup, conc int, seed0 int64, enc *json.Encoder, mu *sync.Mutex) {
+	f, err := os.Open(path)
+	if err != nil {
+		panic(err)
+	}
+	var ps []PosIn
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 1<<24)
+	for sc.Scan() {
+		var p PosIn
+		if err := json.Unmarshal(sc.Bytes(), &p); err != nil {
+			panic(err)
+		}
+		ps = append(ps, p)
+	}
+	f.Close()
+	if p0 := envI("POS0", 0); p0 > 0 {
+		ps = ps[min(p0, len(ps)):]
+	}
+	if n := envI("NPOS", 0); n > 0 && n < len(ps) {
+		ps = ps[:n]
+	}
+	jobs := make(chan PosIn, len(ps))
+	for _, p := range ps {
+		jobs <- p
+	}
+	close(jobs)
+	t0 := time.Now()
+	n, wins, ties, sum := 0, 0.0, 0.0, 0.0
+	var wg sync.WaitGroup
+	for w := 0; w < conc; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for pi := range jobs {
+				pg, err := cgp.ParseCGP(cfg, pi.CGP)
+				if err != nil {
+					panic(fmt.Sprintf("position %d: %v", pi.I, err))
+				}
+				pg.RecalculateBoard()
+				g := pg.Game
+				seed := seed0 + int64(pi.I)
+				var sd [32]byte
+				binary.LittleEndian.PutUint64(sd[:], uint64(seed))
+				g.SeedBag(sd)
+				r := playOut(g, newGen(g), st, pi.I, seed, g.PlayerOnTurn(), true)
+				mu.Lock()
+				enc.Encode(r)
+				n++
+				sum += float64(r.Spread)
+				if r.Spread > 0 {
+					wins++
+				} else if r.Spread == 0 {
+					ties++
+				}
+				if n%100 == 0 {
+					fmt.Fprintf(os.Stderr, "%d/%d positions: win %.3f  %.0fs\n", n, len(ps), wins/float64(n), time.Since(t0).Seconds())
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	fmt.Printf("FINAL start positions ours=%s(%gs) opp=%s: %d played out, win rate %.3f, ties %.3f, spread %+.1f, %.0fs\n",
+		st.Ours, st.OursSecs, st.Opp, n, wins/float64(max(n, 1)), ties/float64(max(n, 1)), sum/float64(max(n, 1)), time.Since(t0).Seconds())
 }
 
 // ---- positions mode (POSITIONS=file.jsonl with lines {"i", "cgp", "turn", ...}; other fields are ignored; POS0 / NPOS = a slice):
@@ -944,6 +1024,11 @@ func main() {
 	if needNet {
 		cl = NewClient(os.Getenv("SOCK"), envI("BATCH", 512))
 	}
+	if be := os.Getenv("BOT_ERR"); be != "" {
+		if botErr, err = os.OpenFile(be, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o640); err != nil {
+			panic(err)
+		}
+	}
 	needPool := (st.Opp != "HASTY_BOT" && st.Opp != "HASTY_BOT_THROW" && st.Opp != "net") ||
 		(st.Ours != "net" && st.Ours != "search" && st.Ours != "HASTY_BOT" && st.Ours != "HASTY_BOT_THROW") || (needNet && st.Handoff > 0)
 	if needPool {
@@ -961,6 +1046,12 @@ func main() {
 	enc := json.NewEncoder(bw)
 	var mu sync.Mutex
 	fmt.Fprintf(os.Stderr, "setup %+v search %+v exch %v games %d from game %d, seed %d\n", *st, *st.Srch, exchOK, ngames, g0, seed0)
+	if sf := os.Getenv("START"); sf != "" {
+		runStarts(sf, st, conc, seed0, enc, &mu)
+		bw.Flush()
+		out.Close()
+		return
+	}
 	if pf := os.Getenv("POSITIONS"); pf != "" {
 		runPositions(pf, st.Srch, conc, seed0, enc, &mu)
 		bw.Flush()

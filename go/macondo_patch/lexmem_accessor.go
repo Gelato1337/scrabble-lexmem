@@ -2,6 +2,9 @@ package bot
 
 import (
 	"context"
+	"math"
+
+	"github.com/domino14/word-golib/kwg"
 
 	"github.com/domino14/macondo/equity"
 	"github.com/domino14/macondo/montecarlo"
@@ -56,4 +59,46 @@ func (p *BotTurnPlayer) LexmemSim(ctx context.Context, plies int, plays []*move.
 		return nil
 	}
 	return p.simmer.Simulate(ctx)
+}
+
+// LexmemBestPlay: BestPlay of an elite bot with the pre-endgame solver starting earlier. With more than 8 and at most
+// pegUnseen unseen tiles (9 = two tiles in the bag, 10 = three) Macondo's pre-endgame solver plays instead of the
+// simulation, set up as in preendgameBest (endgame plies by the spread, iterative deepening, early cutoff); threads > 0 sets
+// its thread count (its default is every CPU). Any other position: BestPlay.
+func (p *BotTurnPlayer) LexmemBestPlay(ctx context.Context, pegUnseen, threads int) (*move.Move, error) {
+	unseen := int(p.Game.RackFor(p.Game.NextPlayer()).NumTiles()) + p.Game.Bag().TilesRemaining()
+	if unseen <= 8 || unseen > pegUnseen || !HasPreendgame(p.botType) {
+		return p.BestPlay(ctx)
+	}
+	gd, err := kwg.GetKWG(p.Game.Config().WGLConfig(), p.Game.LexiconName())
+	if err != nil {
+		return nil, err
+	}
+	if err = p.preendgamer.Init(p.Game, gd); err != nil {
+		return nil, err
+	}
+	if threads > 0 {
+		p.preendgamer.SetThreads(threads)
+	}
+	switch ourSpread := math.Abs(float64(p.Game.SpreadFor(p.Game.PlayerOnTurn()))); {
+	case ourSpread >= 100:
+		p.preendgamer.SetEndgamePlies(2)
+	case ourSpread >= 75:
+		p.preendgamer.SetEndgamePlies(3)
+	case ourSpread >= 50:
+		p.preendgamer.SetEndgamePlies(4)
+	default:
+		p.preendgamer.SetEndgamePlies(5)
+	}
+	p.preendgamer.SetIterativeDeepening(true)
+	p.preendgamer.SetEarlyCutoffOptim(true)
+	moves, err := p.preendgamer.Solve(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(moves) == 0 {
+		return nil, context.DeadlineExceeded
+	}
+	p.lastCalculatedDetails = p.preendgamer.ShortDetails()
+	return moves[0].Play, nil
 }

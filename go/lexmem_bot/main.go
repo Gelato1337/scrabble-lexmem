@@ -6,6 +6,11 @@
 //         TAB <coords> TAB <tiles ('.' = played through, lowercase = blank)> TAB <the played tiles as a rack>
 // The position is then rebuilt as that CGP + the opponent's play (one history event) and checked against <cgp>.
 // BOT_LOG=info prints Macondo's log (inference lines) to stderr; every history use prints HIST ok / HIST err.
+// Variants of the elite bots (more thinking at the same place in the game):
+//   MIN_SIM_PLIES=n  simulate n plies instead of 2 while more than 14 tiles are unseen (Macondo's MinSimPlies)
+//   PEG_UNSEEN=n     n > 8: the pre-endgame solver plays from n unseen tiles on (9 = two tiles in the bag, 10 = three) instead
+//                    of the simulation (ai/bot LexmemBestPlay), SIM_THREADS threads, PEG_SECS seconds (default: the
+//                    request's); stderr gets one line "PEG <unseen> <seconds used> <play>" per such move
 package main
 
 import (
@@ -25,11 +30,15 @@ import (
 	"github.com/domino14/macondo/config"
 	"github.com/domino14/macondo/game"
 	pb "github.com/domino14/macondo/gen/api/proto/macondo"
+	"github.com/domino14/macondo/move"
 )
 
 // CANDS=K > 0: after a simmed choice, append TAB + "C " + up to K candidates sorted by win probability,
 // each "winprob,equity,iterations,ignored,<play>" separated by ";" (none when no sim ran: endgame / pre-endgame / static bots).
 var cands int
+
+var minPlies, pegUnseen int // MIN_SIM_PLIES, PEG_UNSEEN
+var pegSecs float64         // PEG_SECS
 
 func simCands(tp *bot.BotTurnPlayer) (out string) {
 	defer func() {
@@ -66,6 +75,9 @@ func main() {
 	cfg.Load(os.Args[1:])
 	cfg.AdjustRelativePaths(filepath.Dir(ex))
 	cands, _ = strconv.Atoi(os.Getenv("CANDS"))
+	minPlies, _ = strconv.Atoi(os.Getenv("MIN_SIM_PLIES"))
+	pegUnseen, _ = strconv.Atoi(os.Getenv("PEG_UNSEEN"))
+	pegSecs, _ = strconv.ParseFloat(os.Getenv("PEG_SECS"), 64)
 	threads, _ := strconv.Atoi(os.Getenv("SIM_THREADS"))
 	if threads <= 0 {
 		threads = 1
@@ -152,9 +164,14 @@ func best(cfg *config.Config, code, secs, cgpStr string, threads int) (res strin
 			fmt.Fprintf(os.Stderr, "HIST err %v\n", err)
 		}
 	}
-	tp, err := bot.NewBotTurnPlayerFromGame(gm, &bot.BotConfig{Config: *cfg, SimThreads: threads}, pb.BotRequest_BotCode(bc))
+	tp, err := bot.NewBotTurnPlayerFromGame(gm, &bot.BotConfig{Config: *cfg, SimThreads: threads, MinSimPlies: minPlies}, pb.BotRequest_BotCode(bc))
 	if err != nil {
 		return "", err
+	}
+	unseen := int(gm.RackFor(gm.NextPlayer()).NumTiles()) + gm.Bag().TilesRemaining()
+	early := pegUnseen > 8 && unseen > 8 && unseen <= pegUnseen // the pre-endgame solver earlier than the bot's own stage
+	if early && pegSecs > 0 {
+		s = pegSecs
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s*float64(time.Second)))
 	defer cancel()
@@ -166,7 +183,16 @@ func best(cfg *config.Config, code, secs, cgpStr string, threads int) (res strin
 			res, rerr = tp.GenerateMoves(1)[0].ShortDescription(), nil
 		}
 	}()
-	m, err := tp.BestPlay(ctx)
+	var m *move.Move
+	if early {
+		t0 := time.Now()
+		m, err = tp.LexmemBestPlay(ctx, pegUnseen, threads)
+		if err == nil && m != nil {
+			fmt.Fprintf(os.Stderr, "PEG %d %.1f %s\n", unseen, time.Since(t0).Seconds(), strings.TrimSpace(m.ShortDescription()))
+		}
+	} else {
+		m, err = tp.BestPlay(ctx)
+	}
 	if err != nil || m == nil {
 		fmt.Fprintf(os.Stderr, "FALLBACK %s error: %v\n", code, err)
 		return tp.GenerateMoves(1)[0].ShortDescription(), nil

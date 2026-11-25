@@ -18,7 +18,9 @@
 //
 // "plies": 0 = at most 8 tiles unseen: SIMMING_BOT hands the position to its pre-endgame / endgame solver and samples no
 // rack, so the position is skipped (no difference between rack sources there).
-// Env: MODE SECS ITERS CANDS (default 5) WORKERS (default 8; one single-threaded simulation each).
+// PLIES=n: simulate n plies after the candidate play wherever SIMMING_BOT would simulate fewer (4, 6: deeper lookahead with
+// the same static rollouts and leaf; 99: every rollout runs to the end of the game, so the value is the game's result).
+// Env: MODE SECS ITERS CANDS (default 5) WORKERS (default 8; one single-threaded simulation each) PLIES.
 package main
 
 import (
@@ -79,7 +81,7 @@ func envI(k string, d int) int {
 	return d
 }
 
-func run(conf *bot.BotConfig, in In, eval bool, secs float64, iters, ncand int) (out Out) {
+func run(conf *bot.BotConfig, in In, eval bool, secs float64, iters, ncand, plies int) (out Out) {
 	out.ID = in.ID
 	defer func() {
 		if r := recover(); r != nil {
@@ -102,6 +104,9 @@ func run(conf *bot.BotConfig, in In, eval bool, secs float64, iters, ncand int) 
 	out.Plies = tp.LexmemSimPlies()
 	if out.Plies == 0 {
 		return
+	}
+	if plies > out.Plies {
+		out.Plies = plies
 	}
 	var racks []montecarlo.InferredRack
 	for _, k := range in.OKeep {
@@ -170,7 +175,7 @@ func main() {
 	if v, err := strconv.ParseFloat(os.Getenv("SECS"), 64); err == nil {
 		secs = v
 	}
-	iters, ncand, W := envI("ITERS", 4000), envI("CANDS", 5), envI("WORKERS", 8)
+	iters, ncand, W, plies := envI("ITERS", 4000), envI("CANDS", 5), envI("WORKERS", 8), envI("PLIES", 0)
 	in := make(chan In, 1024)
 	outc := make(chan Out, 1024)
 	var wg sync.WaitGroup
@@ -179,7 +184,7 @@ func main() {
 		go func() {
 			defer wg.Done()
 			for x := range in {
-				outc <- run(conf, x, eval, secs, iters, ncand)
+				outc <- run(conf, x, eval, secs, iters, ncand, plies)
 			}
 		}()
 	}
