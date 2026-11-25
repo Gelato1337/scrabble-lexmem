@@ -878,3 +878,27 @@ one the 2-ply arms use, so it favours them). Paired against the first row:
 - The rack results above hold under the end-of-game judge: true kept tiles +0.419 ± 0.039, whole-history tracking
   +0.098 ± 0.028, the last move alone +0.079 ± 0.025.
 
+**Exact solving earlier, late-game playouts** (`ai/bot` `LexmemBestPlay`, `go/lexmem_bot` `PEG_UNSEEN`, `go/lexmem_search` `START`,
+`eval/late_game.py`, `lumi/late_game.sh`; CPU jobs 24031342, 24032718, 24033486, 186 core-h). SIMMING_BOT hands the game to
+exact solvers at 8 unseen tiles (one tile in the bag). Does it win more when Macondo's pre-endgame solver takes over one step
+earlier, with two tiles in the bag? Positions: the first turn with exactly two tiles in the bag and two full racks in the
+HastyBot v HastyBot held-out games (such a turn occurs in 24.6 % of games, so for one player in about 12 %); the mover is our
+side. Each position is played to the end against HastyBot by SIMMING_BOT as it is (simulation at this move, 10 s) and with
+the solver at this move (its settings as in the bot's own pre-endgame stage; every later move as the bot plays it, 10 s),
+the same bag seed for both. Paired, a tie counts half:
+
+| Our move with two tiles in the bag | Positions | Solves finished | Win-% | vs the simulation |
+|---|---|---|---|---|
+| Simulation, 10 s (SIMMING_BOT as it is) | 96 | | 60.9 % | |
+| Solver, 8 threads, 900 s limit (651 s on average: 1.4 core-h) | 96 | 38 | 57.3 % | −3.6 ± 2.1 |
+| Simulation, 10 s (first 60 positions) | 60 | | 57.5 % | |
+| Solver, 1 thread, 10 s | 60 | 0 | 53.3 % | −4.2 ± 2.5 |
+| Solver, 1 thread, 60 s | 60 | 0 | 53.3 % | −4.2 ± 2.5 |
+
+- The solver at two tiles in the bag is not better than the simulation against HastyBot, at 10 s or at 1.4 core-hours per
+  move; every run is below the simulation (1.7 standard errors at the largest budget). 58 of 96 solves were still unfinished
+  after 2 core-hours.
+- Two likely reasons, not separated here: an unfinished solve returns a shallow answer, and the solver counts a line as lost
+  when a perfect opponent could beat it, while HastyBot's replies are the static ones the simulation plays.
+- Even a gain would have been small per game: these decisions come up in about one game in eight.
+
