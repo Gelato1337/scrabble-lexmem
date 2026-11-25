@@ -9,8 +9,8 @@
 // Variants of the elite bots (more thinking at the same place in the game):
 //   MIN_SIM_PLIES=n  simulate n plies instead of 2 while more than 14 tiles are unseen (Macondo's MinSimPlies)
 //   PEG_UNSEEN=n     n > 8: the pre-endgame solver plays from n unseen tiles on (9 = two tiles in the bag, 10 = three) instead
-//                    of the simulation (ai/bot LexmemBestPlay), SIM_THREADS threads, PEG_SECS seconds (default: the
-//                    request's); stderr gets one line "PEG <unseen> <seconds used> <play>" per such move
+//                    of the simulation (ai/bot LexmemBestPlay), PEG_THREADS threads (default SIM_THREADS), PEG_SECS seconds
+//                    (default: the request's); stderr gets one line "PEG <unseen> <seconds used> <play>" per such move
 package main
 
 import (
@@ -37,8 +37,8 @@ import (
 // each "winprob,equity,iterations,ignored,<play>" separated by ";" (none when no sim ran: endgame / pre-endgame / static bots).
 var cands int
 
-var minPlies, pegUnseen int // MIN_SIM_PLIES, PEG_UNSEEN
-var pegSecs float64         // PEG_SECS
+var minPlies, pegUnseen, pegThreads int // MIN_SIM_PLIES, PEG_UNSEEN, PEG_THREADS
+var pegSecs float64                     // PEG_SECS
 
 func simCands(tp *bot.BotTurnPlayer) (out string) {
 	defer func() {
@@ -78,6 +78,7 @@ func main() {
 	minPlies, _ = strconv.Atoi(os.Getenv("MIN_SIM_PLIES"))
 	pegUnseen, _ = strconv.Atoi(os.Getenv("PEG_UNSEEN"))
 	pegSecs, _ = strconv.ParseFloat(os.Getenv("PEG_SECS"), 64)
+	pegThreads, _ = strconv.Atoi(os.Getenv("PEG_THREADS"))
 	threads, _ := strconv.Atoi(os.Getenv("SIM_THREADS"))
 	if threads <= 0 {
 		threads = 1
@@ -186,7 +187,11 @@ func best(cfg *config.Config, code, secs, cgpStr string, threads int) (res strin
 	var m *move.Move
 	if early {
 		t0 := time.Now()
-		m, err = tp.LexmemBestPlay(ctx, pegUnseen, threads)
+		pt := pegThreads
+		if pt <= 0 {
+			pt = threads
+		}
+		m, err = tp.LexmemBestPlay(ctx, pegUnseen, pt)
 		if err == nil && m != nil {
 			fmt.Fprintf(os.Stderr, "PEG %d %.1f %s\n", unseen, time.Since(t0).Seconds(), strings.TrimSpace(m.ShortDescription()))
 		}

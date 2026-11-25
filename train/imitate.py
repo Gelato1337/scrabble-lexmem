@@ -1,5 +1,6 @@
 """Imitation + value training on HastyBot games, with/without the lexicon branch. Then play vs HastyBot.
-Env: TRAIN, TEST (games tags), LEXICON, STEPS, B, USE_LEX (1/0), RETR (retrieval ckpt), TAG, NWORK, PLAY (games vs HastyBot at the end)"""
+Env: TRAIN, TEST (games tags), LEXICON, STEPS, B, USE_LEX (1/0), RETR (retrieval ckpt), TAG, NWORK, PLAY (games vs HastyBot at the end),
+D, LAYERS (width and depth of the net, default 256 and 3)"""
 import os, sys, time, math, pickle, random, numpy as np, torch, torch.nn.functional as F
 from torch.utils.data import DataLoader
 from lexmem.core import *; from lexmem.policy import *
@@ -12,7 +13,8 @@ lex = Lexicon(E("LEXICON", "data/NWL23.txt"))
 games_tr = [g for t in E('TRAIN', 'hasty_train').split(",") for g in pickle.load(open(f"data/games_{t}.pkl", "rb"))]   # TRAIN=a,b concatenates
 games_te = pickle.load(open(f"data/games_{E('TEST','hasty_test')}.pkl", "rb"))
 print(f"train games {len(games_tr)} test games {len(games_te)} use_lex={USE_LEX}", flush=True)
-model = PolicyNet(lex, use_lex=USE_LEX).to(dev)
+model = PolicyNet(lex, D=int(E("D", 256)), layers=int(E("LAYERS", 3)), use_lex=USE_LEX).to(dev)
+print(f"net D={model.D} layers={E('LAYERS', 3)}: {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6:.2f}M trainable parameters", flush=True)
 if USE_LEX:
     if E("RETR"): model.load_retrieval(E("RETR")); print("retrieval init from", E("RETR"))
     else: model.refresh_keys()

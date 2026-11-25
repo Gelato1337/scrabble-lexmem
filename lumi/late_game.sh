@@ -10,6 +10,7 @@
 # as it is (run "sim": simulation now, its solvers from 8 unseen tiles) and with Macondo's pre-endgame solver from this position
 # on (runs "peg<seconds>": PEG_UNSEEN = BAG + 7, one thread, that many seconds at the early stage). Every other move: 10 s.
 # Env: BAG (default 2) NPOS (default 1000) PEGS (seconds of the solver runs, default "10 60") NBOT (bot processes, default 60)
+#      PEG_THREADS (solver threads, default 1) with BOT_PROCS (GOMAXPROCS of a bot process) and BOT_MEM (its GOMEMLIMIT)
 source lumi/common.sh; set -o pipefail
 M=/scratch/project_462001611/macondo
 BAG=${BAG:-2}; N=${NPOS:-1000}; NB=${NBOT:-60}

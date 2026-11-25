@@ -27,7 +27,8 @@
 // Game g (0-based, G0 .. G0+NGAMES-1): seed SEED+g; our side moves first when g is even. Output: one JSON line per game.
 // START=file.jsonl (lines {"i", "cgp"}: a position with both racks, our side on turn; POS0 / NPOS = a slice): each position is
 // played from there to the end of the game instead (bag draws seeded by SEED+i); one line per position, "g" = i.
-// BOT_ERR=file: the stderr of the lexmem_bot processes (FALLBACK and PEG lines) is appended there.
+// BOT_ERR=file: the stderr of the lexmem_bot processes (FALLBACK and PEG lines) is appended there. BOT_PROCS (default 2):
+// GOMAXPROCS of each bot process; BOT_MEM (default 2GiB): its GOMEMLIMIT.
 package main
 
 import (
@@ -384,7 +385,7 @@ type BotProc struct {
 func startBot(macondo string) *BotProc {
 	cmd := exec.Command(filepath.Join(macondo, "bin/lexmem_bot"))
 	cmd.Dir = macondo
-	cmd.Env = append(os.Environ(), "GOMAXPROCS=2", "SIM_THREADS=1", "GOMEMLIMIT="+envS("BOT_MEM", "2GiB"))
+	cmd.Env = append(os.Environ(), "GOMAXPROCS="+envS("BOT_PROCS", "2"), "SIM_THREADS=1", "GOMEMLIMIT="+envS("BOT_MEM", "2GiB"))
 	cmd.Stderr = nil
 	if botErr != nil {
 		cmd.Stderr = botErr

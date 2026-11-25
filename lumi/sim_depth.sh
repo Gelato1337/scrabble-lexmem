@@ -16,8 +16,8 @@
 PROJ=/scratch/project_462001611/scrabble-lexmem; M=/scratch/project_462001611/macondo; cd $PROJ || exit 1
 W=${WORKERS:-$((SLURM_CPUS_PER_TASK - 8))}; N=${NPOS:-3000}; export PREFIX=${PREFIX:-simrack}
 OLD=${OLD-"uni10 uni10b uni3 uni30 true10 exact10 trackall10 lexinfer_fix_lex_all_s0 lexinfer_fix_lex_all_s1 lexinfer_fix_nolex_all_s0 lexinfer_fix_nolex_all_s1"}
-NEW=""
-for a in ${ARMS_NEW-"4:10 6:10 4:30 6:30 99:30"}; do
+ARMS_NEW=${ARMS_NEW-"4:10 6:10 4:30 6:30 99:30"}; NEW=""
+for a in $ARMS_NEW; do
   p=${a%%:*}; s=${a##*:}; n=p${p}_$s; [ $p = 99 ] && n=pend_$s
   head -$N data/planinf_uniform.jsonl | (cd $M && PLIES=$p SECS=$s WORKERS=$W ./bin/lexmem_simrack 2> $PROJ/logs/${PREFIX}_${n}_${SLURM_JOB_ID}.err) > data/${PREFIX}_$n.jsonl || exit 1
   echo "[$n] $(tail -1 logs/${PREFIX}_${n}_${SLURM_JOB_ID}.err)"; NEW="$NEW $n"

@@ -849,3 +849,32 @@ the first evaluation is kept as `data/simrack_eval_v1.jsonl`). 2814 simulated po
 - Speed: Macondo's top-play generator (the function its autoplay uses for HastyBot) rejects a rack when some move beats the
   recorded play; only the rest (5 % of the racks) go to the full move list.
 
+**Deeper simulation, position level** (`go/lexmem_simrack` `PLIES`, `eval/sim_infer.py` `EVAL`, `lumi/sim_depth.sh`; CPU jobs
+24031341 and 24032717, 144 core-h). Does SIMMING_BOT choose better when its rollouts look further ahead than 2 plies? The same
+2814 simulated positions, uniform opponent rack, static rollouts and Stop99 as before; only the number of plies after the
+candidate play and the time limit change (the bot's own longer rollouts with 9–14 unseen tiles are kept). Two judges of every
+arm's choice, both with the true kept tiles and 6000 iterations per play: rollouts to the end of the game (the value is the
+game's result when both sides go on as static players; no leaf table), and the 2-ply simulation used above (its leaf is the
+one the 2-ply arms use, so it favours them). Paired against the first row:
+
+| Simulation | Iterations | Time used | Win-%, end-of-game judge | Win-%, 2-ply judge |
+|---|---|---|---|---|
+| 2 plies, 10 s (SIMMING_BOT as it is) | 1266 | 8.0 s | (54.05 %) | (53.69 %) |
+| 2 plies, 10 s, second run (noise floor) | 1256 | 8.0 s | −0.035 ± 0.026 | −0.030 ± 0.023 |
+| 2 plies, 3 s | 115 | 3.0 s | −0.242 ± 0.038 | −0.238 ± 0.032 |
+| 2 plies, 30 s | 2350 | 12.1 s | +0.050 ± 0.023 | +0.049 ± 0.020 |
+| 4 plies, 10 s | 312 | 9.8 s | −0.221 ± 0.040 | −0.391 ± 0.034 |
+| 6 plies, 10 s | 194 | 9.9 s | −0.568 ± 0.046 | −0.812 ± 0.043 |
+| 4 plies, 30 s | 1774 | 23.9 s | +0.054 ± 0.033 | −0.147 ± 0.027 |
+| 6 plies, 30 s | 926 | 27.5 s | −0.078 ± 0.036 | −0.367 ± 0.032 |
+| To the end of the game, 30 s | 798 | 29.0 s | −1.567 ± 0.065 | −1.879 ± 0.061 |
+
+- At the same time limit deeper is worse under both judges (4 plies −0.22, 6 plies −0.57 under the end-of-game judge).
+- With three times the limit 4 plies gains +0.054, the same as 2 plies with that limit (+0.050, in half the time). 6 plies
+  and full-length rollouts lose even under the judge that uses full-length rollouts itself.
+- Each extra ply costs iterations (1266 → 312 → 194 at 10 s) and adds rollout noise; nothing here shows a bias of the 2-ply
+  leaf that depth would remove at these budgets. More time for this simulator buys about +0.05 win-% per decision whether it
+  goes to iterations or to depth.
+- The rack results above hold under the end-of-game judge: true kept tiles +0.419 ± 0.039, whole-history tracking
+  +0.098 ± 0.028, the last move alone +0.079 ± 0.025.
+
