@@ -11,6 +11,8 @@ same positions under another dictionary> adds a report on the quarter of positio
 QINIT: fut (default) = query encoder from the future-word model, frozen; fut_train = same start, trained; random = fresh and trained
 (a control with no dictionary-trained part). HORIZON=2 (labels from go/lexmem_plan H2=1): three outputs E_opp, E_my2, E_opp2 and the two-turn planning value
 PV2 = score - E_opp + E_my2 - E_opp2. HORIZON=3 (H3=1 labels): five outputs, + E_my3, E_opp3; PV3 = PV2 + E_my3 - E_opp3.
+HOPS / HOP_LAYERS / HOP_LEX: several lookups in a row (train_lexvalue.py). The last evaluation's per-position rows go to
+data/planrows_<TAG>.pkl (eval/plan_pairs.py compares runs position by position).
 Usage: ARM=lex MAX_TRAIN=50000 STEPS=20000 SEED=0 TAG=lexplan_lex_50k python train/train_lexplan.py"""
 import os, sys, time, math, pickle, random, importlib.util, numpy as np, torch, torch.nn.functional as F
 HOR = int(os.environ.get("HORIZON", "1")); H2 = HOR >= 2; H3 = HOR == 3
@@ -83,7 +85,7 @@ assert QINIT in ("fut", "fut_train", "random")
 if QINIT != "random": model.qenc.load_state_dict({k[5:]: v for k, v in sd.items() if k.startswith("qenc.")})
 if QINIT == "fut":
     for p in model.qenc.parameters(): p.requires_grad_(False)
-print(f"query encoder: {dict(fut='future-word model, frozen', fut_train='future-word model, trained', random='fresh, trained')[QINIT]}; horizon {HOR}", flush=True)
+print(f"query encoder: {dict(fut='future-word model, frozen', fut_train='future-word model, trained', random='fresh, trained')[QINIT]}; horizon {HOR}; lookups {tlv.HOPS}" + (f" ({tlv.HOP_LAYERS} layers after each later one; later ones {'retrieve' if tlv.LEXARM and tlv.HOP_LEX else 'do not retrieve'})" if tlv.HOPS > 1 else ""), flush=True)
 if tlv.LEXARM:
     model.wenc.load_state_dict({k[5:]: v for k, v in sd.items() if k.startswith("wenc.") and not k.startswith("wenc.slot") and k not in ("wenc.POS", "wenc.LEN")}, strict=False)
     model.refresh_keys()
@@ -105,7 +107,7 @@ if E("SENS_REF"):
         print(f"dictionary-sensitive positions: {len(SENS)} of {len(shift)} matched (label shift >= {thr:.1f} points)", flush=True)
 
 @torch.no_grad()
-def evaluate(tag, subset=None):
+def evaluate(tag, subset=None, save=None):   # save: file for the per-position rows (paired comparisons: eval/plan_pairs.py)
     model.eval(); pred = {}
     for k in range(0, len(EV), 128):
         b = {kk: v.to(dev) for kk, v in coll(EV[k:k + 128]).items()}
@@ -113,7 +115,7 @@ def evaluate(tag, subset=None):
         v = v.float().cpu().numpy() * 50
         for t in range(len(v)): pred[(int(b["pos"][t]), int(b["cand_j"][t]))] = v[t]
     model.train()
-    ys, ps, ws = [[] for _ in TGT], [[] for _ in TGT], [[] for _ in TGT]; rows = []
+    ys, ps, ws = [[] for _ in TGT], [[] for _ in TGT], [[] for _ in TGT]; rows = []; ids = []
     for i in held_pos:
         if subset is not None and i not in subset: continue
         cs = data[i]["cands"]; js = [j for j in range(len(cs)) if (i, j) in pred]
@@ -123,10 +125,11 @@ def evaluate(tag, subset=None):
             y = np.array([cs[j][ix] for j in js]); q = np.array([pred[(i, j)][t] for j in js])
             ys[t] += list(y); ps[t] += list(q); ws[t] += list(zip(y - y.mean(), q - q.mean())); pv += sg * y; pvh += sg * q
         best = int(np.argmax(pv)); ch = int(np.argmax(pvh)); base = int(np.argmax(sc))
-        rows.append((ch == best, pv[best] - pv[ch], base == best, pv[best] - pv[base], pv[best] - pv[base] >= CRIT, data[i]["bag"]))
+        rows.append((ch == best, pv[best] - pv[ch], base == best, pv[best] - pv[base], pv[best] - pv[base] >= CRIT, data[i]["bag"])); ids.append(i)
     def r2(y, p): y, p = np.array(y), np.array(p); return 1 - ((y - p) ** 2).mean() / max(y.var(), 1e-9)
     def r2w(z): z = np.array(z); return 1 - ((z[:, 0] - z[:, 1]) ** 2).mean() / max((z[:, 0] ** 2).mean(), 1e-9)
     R = np.array(rows, dtype=float); crit = R[:, 4] == 1
+    if save: pickle.dump(dict(pos=np.array(ids), rows=R, cols=("correct", "regret", "base_correct", "base_regret", "critical", "bag")), open(save, "wb"))
     line = (f"[{tag}] positions {len(R)}: R2 " + ", ".join(f"{nm} {r2(ys[t], ps[t]):.3f} (within {r2w(ws[t]):.3f})" for t, (nm, _, _) in enumerate(TGT)) + " | "
             f"decision acc {R[:,0].mean():.3f} regret {R[:,1].mean():.2f} pts (top-score baseline acc {R[:,2].mean():.3f} regret {R[:,3].mean():.2f})")
     if crit.sum(): line += f" | critical n={int(crit.sum())}: acc {R[crit,0].mean():.3f} regret {R[crit,1].mean():.2f} (baseline regret {R[crit,3].mean():.2f})"
@@ -144,7 +147,7 @@ def load_ckpt(path):
 if E("EVAL_CKPTS"):   # evaluation only (e.g. zero-shot transfer to another dictionary)
     for path in E("EVAL_CKPTS").split(","):
         sk = load_ckpt(path); print(f"=== {path} (skipped buffers: {sk})", flush=True)
-        evaluate(os.path.basename(path)); 
+        evaluate(os.path.basename(path), save=f"data/planrows_{os.path.basename(path)[:-3]}.pkl")
         if SENS: evaluate(os.path.basename(path) + " | dictionary-sensitive", SENS)
     sys.exit(0)
 if E("INIT_CKPT"): print(f"init from {E('INIT_CKPT')} (skipped buffers: {load_ckpt(E('INIT_CKPT'))})", flush=True)   # few-shot transfer
@@ -170,7 +173,7 @@ for b in loader:
     step += 1; la = loss.item() if la is None else 0.98 * la + 0.02 * loss.item()
     if step % 500 == 0: print(f"step {step} t={time.time()-t0:.0f}s loss={la:.4f}", flush=True)
     if step % int(E("EVAL_EVERY", 4000)) == 0 or step == STEPS:
-        evaluate(f"step {step}"); torch.save(model.state_dict(), f"data/{TAG}.pt")
+        evaluate(f"step {step}", save=f"data/planrows_{TAG}.pkl" if step == STEPS else None); torch.save(model.state_dict(), f"data/{TAG}.pt")
         if SENS and step == STEPS: evaluate(f"step {step} | dictionary-sensitive", SENS)
     if step >= STEPS: break
 print(f"=== saved data/{TAG}.pt", flush=True)

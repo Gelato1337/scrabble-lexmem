@@ -22,6 +22,11 @@ NOUT = int(E("NOUT", 2))   # regression outputs of the value head (train_lexplan
 NO_XCHK = E("NO_XCHK", "0") == "1"   # isolation test: lane tokens carry no cross-check letters (the only dictionary-derived input), both arms
 TARGET = E("TARGET", "outcome")   # outcome: the game's own result; ro: mean of K rollouts from the afterstate (rec["ro"])
 FREEZE_Q = E("FREEZE_Q", "0") == "1"; MAX_TRAIN = int(E("MAX_TRAIN", 0))   # frozen query encoder (both arms); fixed training subsample
+# HOPS lookups in a row (default 1 = the model of rounds 1-7). Lookup h > 1: every lane token's query is updated from the trunk's
+# output for that token (which has seen the earlier lookups of all lanes and both sides), the lane's same candidate words are
+# retrieved again with it, and HOP_LAYERS more transformer layers follow. HOP_LEX=0: the later steps update the tokens from the
+# new query alone, without retrieving (same layers and depth: the control for the repeated lookup). ARM=nolex never retrieves.
+HOPS = int(E("HOPS", 1)); HOP_LAYERS = int(E("HOP_LAYERS", 3)); HOP_LEX = E("HOP_LEX", "1") == "1"
 SEED = int(E("SEED", 0)); torch.manual_seed(SEED); random.seed(SEED); np.random.seed(SEED)
 lex = Lexicon(E("LEXICON", "data/NWL23.txt"))
 
@@ -117,6 +122,11 @@ class LexValue(nn.Module):
             self.up = nn.Linear(D, D); self.us = nn.Linear(3, D); self.scale = nn.Parameter(torch.tensor(D ** -0.5))
         enc = nn.TransformerEncoderLayer(D, 4, 4 * D, dropout=0.0, batch_first=True, norm_first=True)
         self.tr = nn.TransformerEncoder(enc, 3); self.norm = nn.LayerNorm(D); self.val = nn.Sequential(nn.Linear(D, D), nn.GELU(), nn.Linear(D, NOUT))
+        if HOPS > 1:   # built after everything else: with HOPS=1 the model and its initial weights are those of the earlier rounds
+            self.hq = nn.ModuleList(nn.Linear(D, D) for _ in range(HOPS - 1)); self.huq = nn.ModuleList(nn.Linear(D, D) for _ in range(HOPS - 1))
+            for m in self.hq: nn.init.zeros_(m.weight); nn.init.zeros_(m.bias)   # zero at the start: a later query begins as the first query
+            if LEXARM and HOP_LEX: self.hup = nn.ModuleList(nn.Linear(D, D) for _ in range(HOPS - 1)); self.hus = nn.ModuleList(nn.Linear(3, D) for _ in range(HOPS - 1))
+            self.htr = nn.ModuleList(nn.TransformerEncoder(nn.TransformerEncoderLayer(D, 4, 4 * D, dropout=0.0, batch_first=True, norm_first=True), HOP_LAYERS) for _ in range(HOPS - 1))
     @torch.no_grad()
     def refresh_keys(self):
         for i in range(0, lex.NW, 8192):
@@ -137,7 +147,15 @@ class LexValue(nn.Module):
         pos = torch.stack([self.cnn(board) + self.ttype[0], self.leave(b["leave"] / 3) + self.ttype[1], self.unseen(b["unseen"] / 12) + self.ttype[2], self.glob(b["glob"]) + self.ttype[3]], 1)
         x = torch.cat([self.cls.expand(Bn, -1, -1), pos, tok], 1)
         pad = torch.cat([torch.zeros(Bn, 5, dtype=torch.bool, device=x.device), ~b["uvalid"]], 1)
-        h = self.norm(self.tr(x, src_key_padding_mask=pad))
+        h = self.tr(x, src_key_padding_mask=pad)
+        for i in range(HOPS - 1):   # later lookups: query from the trunk's lane token -> the lane's candidates again -> more layers
+            q2 = q + self.hq[i](self.norm(h)[:, 5:].reshape(Bn * Un, D)); t2 = self.huq[i](q2)
+            if LEXARM and HOP_LEX:
+                lg2 = (torch.einsum("nd,ncd->nc", q2, k) * self.scale).masked_fill(~cv, -1e4)
+                p2 = torch.softmax(lg2, 1) * cv.any(1, keepdim=True)
+                t2 = t2 + self.hup[i](torch.einsum("nc,ncd->nd", p2, k)) + self.hus[i](torch.stack([best, (p2 * sc).sum(1) / 50, b["msize"].flatten()], 1))
+            h = self.htr[i](torch.cat([h[:, :5], h[:, 5:] + t2.view(Bn, Un, D)], 1), src_key_padding_mask=pad)
+        h = self.norm(h)
         return self.val(h[:, 0]), aux_logits
 
 class DS(Dataset):

@@ -23,9 +23,9 @@ def bot_cpus():
     return {cores[(2 * i) % len(cores)], cores[(2 * i + 1) % len(cores)]}
 def init():
     from lexmem.core import Lexicon
-    from lexmem.policy import PolicyNet, MoveDataset
+    from lexmem.policy import PolicyNet, MoveDataset, net_shape
     from lexmem.harness import HastyBot, MacondoBot
-    lex = Lexicon(LEXICON); model = PolicyNet(lex, use_lex=USE_LEX)
+    lex = Lexicon(LEXICON); model = PolicyNet(lex, use_lex=USE_LEX, **net_shape(torch.load(CKPT, map_location="cpu")))   # width / depth from the checkpoint
     load_shapes(model, CKPT); model.eval()
     if USE_LEX: model.refresh_keys()
     G.update(lex=lex, model=model, helper=MoveDataset(lex, [], use_lex=USE_LEX, exch=os.environ.get("EXCH", "0") == "1"), hasty=HastyBot(lexicon=MLEX) if OPP == "hasty" else MacondoBot(OPP, OPP_SECS, lexicon=MLEX, threads=int(os.environ.get("OPP_THREADS", 1)), cpus=bot_cpus()))

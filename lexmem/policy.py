@@ -161,6 +161,10 @@ def collate_moves(items):
             out[f"rmask{li}"] = rm; out[f"rvalid{li}"] = rv
     return out
 
+def net_shape(sd):
+    """width and depth of a PolicyNet from its checkpoint (state dict): {"D": ..., "layers": ...}."""
+    return dict(D=int(sd["cls"].shape[-1]), layers=1 + max(int(k.split(".")[2]) for k in sd if k.startswith("tr.layers.")))
+
 class PolicyNet(nn.Module):
     def __init__(self, lex, D=256, layers=3, use_lex=False):
         super().__init__()
