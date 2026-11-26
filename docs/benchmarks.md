@@ -932,3 +932,29 @@ per position, then paired with the one-lookup memory net (± = standard error ov
 - Limit of this test: the second lookup searches the words of the first, those playable on the board right after the
   candidate move. Words that become playable only after the opponent's reply are not retrievable; that needs move generation
   on hypothesised boards inside the training loop, which is not built.
+
+
+**A bigger policy net** (`train/imitate.py` `D`, `LAYERS`, `eval/policy_agree.py`, `lumi/bignet.sh`, `lumi/bignet_games.sh`;
+GPU job 24053684, 6.8 GPU-h; CPU job 24053686, 17 core-h). Does a larger net play better on the same data with the same
+recipe? Width 512 and 6 layers (22.2M parameters) against the reference `simsoft_scratch_nolex` (width 256, 3 layers, 4.0M),
+both trained on simsoft_0–30 for 30,000 steps of 48 at learning rate 3e-4 (200-step warm-up, cosine decay), no lexicon
+memory. Agreement: one fixed sample of 5000 held-out teacher tile plays of simsoft_31 with at least two candidates; loss =
+the teacher's win-% estimate of its best move minus that of the net's first choice. Games: each net alone (one forward pass
+per move) against the fixed HastyBot, 4000 games, seeds 777000, paired by game:
+
+| Net | Agreement with the teacher | In the net's top 8 | Teacher-estimated loss, win-% | Win-% vs HastyBot | Spread |
+|---|---|---|---|---|---|
+| Width 256, 3 layers, 4.0M (reference) | 65.5 % ± 0.7 | 94.2 % | 0.611 ± 0.031 | 51.5 % ± 0.8 | +3.5 ± 1.6 |
+| Width 512, 6 layers, 22.2M | 55.9 % ± 0.7 | 88.9 % | 0.993 ± 0.038 | 46.4 % ± 0.8 | −9.0 ± 1.6 |
+| Paired difference | −9.6 ± 0.6 points | | +0.383 ± 0.028 | −5.1 ± 0.9 | −12.5 ± 1.7 |
+
+- The bigger net is worse on every measure, in every game phase. This run measures a failed optimisation under the small
+  net's recipe, not what size does: the training loss was 2.458 at step 9000 (small net 2.253), rose to 2.71 at step 10,000
+  and 2.82 at step 15,000, and was back at 2.455 only at step 30,000 (small net 2.082). The value head's error went from 48
+  points to 80 (untrained 83) between steps 8000 and 10,000 and returned to 48 by step 20,000.
+- It was behind before the breakdown too: agreement on the 600-position training check 0.530 against 0.587 at step 8000,
+  and never above 0.537 (small net 0.612 at the end).
+- Whether size helps with a recipe that suits it (lower learning rate, longer warm-up: `LR`, `WARMUP` in `train/imitate.py`)
+  is untested.
+- First game figure against the fixed HastyBot: the reference net alone wins 51.5 % ± 0.8 on the seeds where it won
+  53.2 % ± 0.8 against the old one.
