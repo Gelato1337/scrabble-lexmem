@@ -902,3 +902,33 @@ the same bag seed for both. Paired, a tie counts half:
   when a perfect opponent could beat it, while HastyBot's replies are the static ones the simulation plays.
 - Even a gain would have been small per game: these decisions come up in about one game in eight.
 
+
+**A second lexicon lookup in the planning net** (`train/train_lexvalue.py` `HOPS`, `eval/plan_pairs.py`,
+`lumi/submit_hops.sh`; GPU jobs 24053687–91, 11.4 GPU-h; CPU smoke 24040248). Does the planning net decide better when it
+consults the lexicon twice? With `HOPS=2`, after the 3-layer trunk every lane token gets a new query (the first query plus a
+linear map, zero at the start, of the trunk's output for that token, which has seen the first lookups of all lanes and both
+sides); the lane's same candidate words (each side's exact rules mask, top 256 by score) are retrieved again with it; the
+pooled words and score statistics are added to the token and 3 more layers follow. The control for the lookup (`HOP_LEX=0`)
+has the same query update and the same 3 layers without the second retrieval (8.94M trainable parameters against 9.00M).
+Three turns, all 269,882 training positions, 40,000 steps of 64, seeds 0–1, otherwise the round-7 setting
+(`QINIT=fut_train NO_XCHK=1`); the four round-7 one-lookup nets re-evaluated with the changed code print their stored last
+evaluations exactly. 2998 held-out positions, 1010 critical under PV3; regret in points. Last column: the two seeds averaged
+per position, then paired with the one-lookup memory net (± = standard error over positions; negative = better):
+
+| Net | Regret all, seeds 0 / 1 | Regret critical, seeds 0 / 1 | R² E_opp within | vs memory, one lookup: all / critical |
+|---|---|---|---|---|
+| Same-start control, no memory (round 7) | 1.49 / 1.50 | 2.83 / 2.83 | 0.49 / 0.48 | +0.053 ± 0.026 / +0.103 ± 0.060 |
+| Memory, one lookup (round 7) | 1.44 / 1.45 | 2.77 / 2.69 | 0.54 / 0.54 | |
+| Memory, one lookup, 3 more layers | 1.44 / 1.41 | 2.77 / 2.68 | 0.55 / 0.54 | −0.018 ± 0.023 / −0.005 ± 0.050 |
+| Memory, two lookups | 1.43 / 1.43 | 2.70 / 2.70 | 0.54 / 0.53 | −0.016 ± 0.024 / −0.031 ± 0.057 |
+
+- Two lookups against one lookup at the same depth: regret +0.003 ± 0.024 on all positions, −0.026 ± 0.050 on the critical
+  ones (per seed −0.015 / +0.021 and −0.073 / +0.020). The second lookup adds nothing measurable.
+- More depth adds nothing either (−0.018 ± 0.023): the one-lookup net is not limited by its trunk. The same-start control at
+  the larger depth was not run.
+- First per-position error bars on the round-7 comparison (three turns, all data): memory − same-start control =
+  −0.053 ± 0.026 points of regret per decision, −0.103 ± 0.060 on the critical positions, decision accuracy +1.1 ± 0.4
+  points: about two standard errors. The ± covers the sample of positions, not the seeds.
+- Limit of this test: the second lookup searches the words of the first, those playable on the board right after the
+  candidate move. Words that become playable only after the opponent's reply are not retrievable; that needs move generation
+  on hypothesised boards inside the training loop, which is not built.

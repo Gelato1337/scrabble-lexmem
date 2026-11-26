@@ -1,12 +1,12 @@
 """Imitation + value training on HastyBot games, with/without the lexicon branch. Then play vs HastyBot.
 Env: TRAIN, TEST (games tags), LEXICON, STEPS, B, USE_LEX (1/0), RETR (retrieval ckpt), TAG, NWORK, PLAY (games vs HastyBot at the end),
-D, LAYERS (width and depth of the net, default 256 and 3)"""
+D, LAYERS (width and depth of the net, default 256 and 3), LR, WARMUP (peak learning rate 3e-4, linear warm-up steps 200)"""
 import os, sys, time, math, pickle, random, numpy as np, torch, torch.nn.functional as F
 from torch.utils.data import DataLoader
 from lexmem.core import *; from lexmem.policy import *
 import warnings; warnings.filterwarnings("ignore")
 E = os.environ.get
-STEPS = int(E("STEPS", 3000)); B = int(E("B", 32)); USE_LEX = E("USE_LEX", "0") == "1"; TAG = E("TAG", "imit"); LR = float(E("LR", 3e-4))
+STEPS = int(E("STEPS", 3000)); B = int(E("B", 32)); USE_LEX = E("USE_LEX", "0") == "1"; TAG = E("TAG", "imit"); LR = float(E("LR", 3e-4)); WARMUP = int(E("WARMUP", 200))
 NW_ = int(E("NWORK", E("SLURM_CPUS_PER_TASK", 8))); PG = E("PG", "0") == "1"; EI = E("EI", "0") == "1"; TAU = float(E("TAU", 2.0)); MARGIN = float(E("MARGIN", 3.0)); BETA = float(E("BETA", 0.5)); PG_TEMP = float(E("TEMP", 0.7)); PPO_EPS = float(E("PPO_EPS", 0.2)); PLAY = int(E("PLAY", 0)); NEV = int(E("NEV", 300)); dev = "cuda" if torch.cuda.is_available() else "cpu"
 torch.manual_seed(0); random.seed(0); np.random.seed(0)
 lex = Lexicon(E("LEXICON", "data/NWL23.txt"))
@@ -28,7 +28,7 @@ KPLY = int(E("KPLY", 4)); EXCH = E("EXCH", "0") == "1"   # EXCH=1: exchanges are
 ds = MoveDataset(lex, games_tr, seed=0, use_lex=USE_LEX, kply=KPLY, tau=TAU, exch=EXCH, ei=EI)
 dl = DataLoader(ds, batch_size=B, num_workers=NW_, collate_fn=collate_moves, persistent_workers=NW_ > 0, prefetch_factor=4 if NW_ > 0 else None)
 ev = MoveDataset(lex, games_te, seed=1, use_lex=USE_LEX, kply=KPLY, exch=EXCH, ei=EI); ev.rng = random.Random(1); EV = [ev[i] for i in range(NEV)]
-opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.01); sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1, (s + 1) / 200) * 0.5 * (1 + math.cos(math.pi * min(s, STEPS) / STEPS)))
+opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.01); sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1, (s + 1) / WARMUP) * 0.5 * (1 + math.cos(math.pi * min(s, STEPS) / STEPS)))
 
 @torch.no_grad()
 def evaluate(tag):
