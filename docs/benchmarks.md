@@ -954,7 +954,34 @@ per move) against the fixed HastyBot, 4000 games, seeds 777000, paired by game:
   points to 80 (untrained 83) between steps 8000 and 10,000 and returned to 48 by step 20,000.
 - It was behind before the breakdown too: agreement on the 600-position training check 0.530 against 0.587 at step 8000,
   and never above 0.537 (small net 0.612 at the end).
-- Whether size helps with a recipe that suits it (lower learning rate, longer warm-up: `LR`, `WARMUP` in `train/imitate.py`)
-  is untested.
+- Whether size helps with a recipe that suits it (lower learning rate, longer warm-up) is tested in the next block.
 - First game figure against the fixed HastyBot: the reference net alone wins 51.5 % ± 0.8 on the seeds where it won
   53.2 % ± 0.8 against the old one.
+
+
+**Bigger policy nets at lower learning rates** (`train/imitate_sweep.py`, `lumi/bignet_sweep.sh`, `lumi/bignet_games.sh`; GPU
+job 24068486, 6.4 GPU-h for five nets; CPU job 24068487, 45 core-h; CPU check 24068386). Five nets trained at once in one job
+on 4 GPUs, every net on the stream of batches the reference saw (the batches depend only on the dataset seed, the number of
+workers and the batch size); on CPU a net from this trainer equals, weight for weight, the net `train/imitate.py` trains with
+the same settings. Recipe of the reference otherwise: 30,000 steps of 48, cosine decay. Measures as in the block above (5000
+held-out teacher plays; 4000 games alone against the fixed HastyBot, seeds 777000); every "vs reference" is paired, ± one
+standard error; training loss = running mean at step 30,000:
+
+| Net | Learning rate, warm-up | Training loss | Agreement | vs reference | Teacher-estimated loss vs reference | Win-% | vs reference | Spread vs reference |
+|---|---|---|---|---|---|---|---|---|
+| Width 256, 3 layers, 4.0M (reference) | 3e-4, 200 | 2.082 | 65.5 % | | | 51.5 % | | |
+| Width 256, 3 layers, 4.0M | 1e-4, 1000 | 2.153 | 63.4 % | −2.08 ± 0.49 | +0.073 ± 0.019 | 50.1 % | −1.4 ± 0.9 | −2.8 ± 1.5 |
+| Width 384, 4 layers, 9.5M | 2e-4, 1000 | 2.099 | 64.8 % | −0.74 ± 0.48 | +0.025 ± 0.019 | 50.5 % | −1.0 ± 0.8 | −3.1 ± 1.4 |
+| Width 512, 6 layers, 22.2M | 5e-5, 1000 | 2.111 | 64.1 % | −1.42 ± 0.48 | +0.064 ± 0.017 | 49.4 % | −2.1 ± 0.8 | −3.0 ± 1.4 |
+| Width 512, 6 layers, 22.2M | 1e-4, 1000 | 2.072 | 65.9 % | +0.42 ± 0.44 | −0.001 ± 0.017 | 49.5 % | −2.0 ± 0.8 | −1.4 ± 1.4 |
+| Width 512, 6 layers, 22.2M | 2e-4, 2000 | 2.057 | 65.5 % | +0.02 ± 0.43 | −0.017 ± 0.014 | 51.4 % | −0.1 ± 0.8 | +0.2 ± 1.3 |
+| Width 512, 6 layers, 22.2M (block above) | 3e-4, 200 | 2.455 | 55.9 % | −9.60 ± 0.64 | +0.383 ± 0.028 | 46.4 % | −5.1 ± 0.9 | −12.5 ± 1.7 |
+
+- All five trained without a breakdown; the 22.2M net is stable at 2e-4 with a 2000-step warm-up.
+- No bigger net beats the reference. The best one (2e-4) equals it: agreement +0.02 ± 0.43 points, win-% −0.1 ± 0.8, at a
+  lower training loss (2.057 against 2.082). The three stable 22.2M nets averaged: agreement −0.33 ± 0.37, win-% −1.4 ± 0.7.
+- At one learning rate (1e-4) the 22.2M net is 2.50 ± 0.47 points of agreement above the 4.0M net; in games −0.6 ± 0.8.
+- The reference's own learning rate is not its weak point: the 4.0M net at 1e-4 is below it on both measures.
+- Agreement and games do not rank the nets alike: the 22.2M net at 1e-4 has the highest agreement and is 2.0 ± 0.8 win-% below
+  the reference, and the three nets trained at 1e-4 or lower are 1.4–2.1 win-% below it. One run per setting and five
+  comparisons against one reference: a difference of two standard errors is not established.
