@@ -985,3 +985,21 @@ standard error; training loss = running mean at step 30,000:
 - Agreement and games do not rank the nets alike: the 22.2M net at 1e-4 has the highest agreement and is 2.0 ± 0.8 win-% below
   the reference, and the three nets trained at 1e-4 or lower are 1.4–2.1 win-% below it. One run per setting and five
   comparisons against one reference: a difference of two standard errors is not established.
+
+
+**Training longer on more data, re-measured** (`lumi/net_check.sh`; CPU job 24076320, 21 core-h). The October net
+`simsoft_big_nolex` is the reference recipe (width 256, 3 layers, 4.0M) trained 2.7 times as long, 80,000 steps of 48, on
+2.7 times the data: simsoft_0–30, simsoftb_0–35 and simsoftc_0–21 (89,000 games, about 2.0M positions; simsoft_31 is not among
+them). With the measures of the blocks above (5000 held-out teacher plays, CPU; 4000 games alone against the fixed HastyBot,
+seeds 777000), paired with the reference:
+
+| Net | Agreement | vs reference | Teacher-estimated loss | vs reference | Win-% vs HastyBot | vs reference | Spread vs reference |
+|---|---|---|---|---|---|---|---|
+| Reference, 30,000 steps, 730k positions | 65.4 % | | 0.612 | | 51.5 % | | |
+| `simsoft_big_nolex`, 80,000 steps, 2.0M positions | 66.5 % | +1.12 ± 0.46 | 0.548 | −0.064 ± 0.016 | 51.0 % | −0.5 ± 0.8 | −0.0 ± 1.4 |
+
+- Longer training on more data makes the moves a little better as the teacher prices them (about a tenth less loss per move,
+  four standard errors) and gives nothing measurable in games. 4000 paired games resolve about ±1.6 win-% (two standard
+  errors); a per-move gain of this size is probably worth less than that per game (a rough estimate).
+- The reference agrees 65.4 % here and 65.5 % in the GPU jobs above (fp32 on CPU against bf16 on GPU).
+
